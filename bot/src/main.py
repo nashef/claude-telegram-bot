@@ -6,7 +6,7 @@ import sys
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from src.config.settings import settings
-from src.handlers.message_handler import start_command, handle_message
+from src.handlers.message_handler import start_command, handle_message, handle_photo
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +28,7 @@ def main():
 
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )

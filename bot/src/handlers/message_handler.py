@@ -167,14 +167,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except asyncio.CancelledError:
             pass
 
-        # Send response (split if too long) - no confirmation needed
-        if len(response) > 4096:
-            chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
-            await thinking_msg.delete()
-            for chunk in chunks:
-                await update.message.reply_text(chunk)
-        else:
-            await thinking_msg.edit_text(response)
+        # Check for file sending markers: [SEND_FILE:path] or [SEND_AUDIO:path]
+        import re
+        from pathlib import Path as PathLib
+
+        file_pattern = r'\[SEND_(FILE|AUDIO):([^\]]+)\]'
+        file_matches = list(re.finditer(file_pattern, response))
+
+        # Remove file markers from response text
+        clean_response = re.sub(file_pattern, '', response).strip()
+
+        # Send files first
+        for match in file_matches:
+            file_type, file_path = match.groups()
+            file_path = file_path.strip()
+
+            try:
+                abs_path = PathLib(file_path)
+                if not abs_path.is_absolute():
+                    abs_path = PathLib(claude_executor.config.approved_directory) / file_path
+
+                if abs_path.exists() and abs_path.is_file():
+                    logger.info(f"Sending {file_type.lower()}: {abs_path}")
+
+                    with open(abs_path, 'rb') as f:
+                        if file_type == "AUDIO":
+                            await update.message.reply_audio(
+                                audio=f,
+                                filename=abs_path.name,
+                                caption=f"🎵 {abs_path.name}"
+                            )
+                        else:
+                            await update.message.reply_document(
+                                document=f,
+                                filename=abs_path.name
+                            )
+                else:
+                    await update.message.reply_text(f"⚠️ File not found: {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to send file {file_path}: {e}")
+                await update.message.reply_text(f"❌ Error sending file: {str(e)[:100]}")
+
+        # Send response text (split if too long) - no confirmation needed
+        if clean_response:
+            if len(clean_response) > 4096:
+                chunks = [clean_response[i:i+4096] for i in range(0, len(clean_response), 4096)]
+                await thinking_msg.delete()
+                for chunk in chunks:
+                    await update.message.reply_text(chunk)
+            else:
+                await thinking_msg.edit_text(clean_response)
 
     except TimeoutError:
         # Stop typing on timeout
@@ -188,6 +230,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ Error: {str(e)[:200]}"
         )
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle photo messages - save to Jarvis/tmp and notify Claude."""
+    user_id = update.effective_user.id
+
+    # Security check
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    try:
+        # Get the largest photo (best quality)
+        photo = update.message.photo[-1]
+
+        # Download the photo
+        photo_file = await photo.get_file()
+
+        # Generate filename
+        import time
+        timestamp = int(time.time())
+        filename = f"telegram_photo_{timestamp}.jpg"
+        filepath = f"{settings.approved_directory}/tmp/{filename}"
+
+        # Ensure tmp directory exists
+        import os
+        os.makedirs(f"{settings.approved_directory}/tmp", exist_ok=True)
+
+        # Download and save
+        await photo_file.download_to_drive(filepath)
+
+        logger.info(f"Saved photo to {filepath}")
+
+        # Get caption if any
+        caption = update.message.caption or "no caption"
+
+        # Notify Claude about the photo
+        notification = f"📸 leaf sent you a photo: {filepath}\nCaption: {caption}"
+
+        # Send acknowledgment
+        await update.message.reply_text(f"✅ Photo saved to tmp/{filename}")
+
+        # Now send the notification as a regular message for Claude to process
+        # Create a new message context
+        update.message.text = notification
+        await handle_message(update, context)
+
+    except Exception as e:
+        logger.error(f"Error handling photo: {e}")
+        await update.message.reply_text(f"❌ Error saving photo: {str(e)[:200]}")
 
 
 # Note: handle_callback_query removed - no confirmation system needed (matches richardatct)
