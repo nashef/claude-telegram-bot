@@ -16,6 +16,13 @@ from src.handlers.message_handler import (
     start_command, handle_message, handle_photo, handle_audio,
     handle_document, claude_worker, claude_executor
 )
+from src.handlers.commands import (
+    status_command, help_command, clear_command,
+    pause_command, resume_command, ps_command,
+    kill_command, killall_command, debug_command,
+    restart_command, errors_command
+)
+from src.database.models import init_database, close_database
 
 # Configure logging
 logging.basicConfig(
@@ -104,12 +111,20 @@ async def cleanup():
         # Wait for all tasks to complete cancellation
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    # Close database
+    logger.info("Closing database...")
+    close_database()
+
     logger.info("Graceful shutdown complete")
 
 
 async def async_main():
     """Async main function for better control over lifecycle."""
     global _application
+
+    # Initialize database
+    logger.info("Initializing database...")
+    init_database(settings.database_url)
 
     logger.info("Starting Telegram Bot...")
     logger.info(f"Approved directory: {settings.approved_directory}")
@@ -120,8 +135,21 @@ async def async_main():
     application = Application.builder().token(settings.telegram_bot_token).post_init(post_init).build()
     _application = application
 
-    # Add handlers
+    # Add command handlers
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("clear", clear_command))
+    application.add_handler(CommandHandler("pause", pause_command))
+    application.add_handler(CommandHandler("resume", resume_command))
+    application.add_handler(CommandHandler("ps", ps_command))
+    application.add_handler(CommandHandler("kill", kill_command))
+    application.add_handler(CommandHandler("killall", killall_command))
+    application.add_handler(CommandHandler("debug", debug_command))
+    application.add_handler(CommandHandler("restart", restart_command))
+    application.add_handler(CommandHandler("errors", errors_command))
+
+    # Add message handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))

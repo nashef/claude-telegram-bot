@@ -12,6 +12,7 @@ from src.claude.cli_executor import ClaudeProcessManager, StreamUpdate
 from src.security.validator import security_validator
 from src.config.settings import settings
 from src.utils.error_handler import error_handler, categorize_error
+from src.database.manager import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -174,8 +175,13 @@ async def claude_worker(shutdown_event=None):
                     except Exception as e:
                         logger.debug(f"Failed to update progress: {e}")
 
-            # Get current session ID
-            session_id = request.context.user_data.get('claude_session_id')
+            # Get current session ID from database (fallback to context)
+            user_id = request.update.effective_user.id if request.update.effective_user else None
+            session_id = None
+            if user_id:
+                session_id = db_manager.get_user_session(user_id)
+            if not session_id:
+                session_id = request.context.user_data.get('claude_session_id')
 
             # Execute Claude with the request
             logger.info(f"Claude worker: calling executor with prompt: {request.prompt[:100]}...")
@@ -187,6 +193,10 @@ async def claude_worker(shutdown_event=None):
                 stream_callback=stream_callback
             )
 
+            # Track process in database
+            if user_id and response_obj.session_id:
+                db_manager.track_process(response_obj.session_id, user_id, request.prompt[:500])
+
             # Stop typing indicator
             typing_task.cancel()
             try:
@@ -194,9 +204,11 @@ async def claude_worker(shutdown_event=None):
             except asyncio.CancelledError:
                 pass
 
-            # Update session ID
+            # Update session ID in both database and context
             if response_obj.session_id:
                 request.context.user_data['claude_session_id'] = response_obj.session_id
+                if user_id:
+                    db_manager.set_user_session(user_id, response_obj.session_id)
 
             # Update activity tracker
             if 'activity_tracker' in request.context.user_data:
@@ -304,6 +316,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏱️ Rate limit exceeded. Please wait.")
         return
 
+    # Check if bot is paused
+    if db_manager.is_paused():
+        await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
+        return
+
     # Enqueue message for worker to process
     logger.info(f"Enqueuing user message: {message_text[:50]}...")
     await claude_queue.put(ClaudeRequest(
@@ -323,6 +340,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Security check
     if not security_validator.is_authorized(user_id):
         await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Check if bot is paused
+    if db_manager.is_paused():
+        await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
     # Get the largest photo (best quality)
@@ -371,6 +393,11 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Security check
     if not security_validator.is_authorized(user_id):
         await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Check if bot is paused
+    if db_manager.is_paused():
+        await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
     # Get the audio file
@@ -430,6 +457,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Security check
     if not security_validator.is_authorized(user_id):
         await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Check if bot is paused
+    if db_manager.is_paused():
+        await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
     # Get the document

@@ -63,14 +63,22 @@ This document outlines the production hardening improvements needed to make the 
 - **Resilience**: One user's error doesn't affect others (queue continues)
 - **Future enhancements**: Could add retry buttons or error IDs for support
 
-## 3. Slash Commands with Persistence
+## 3. Slash Commands with Persistence ✅ COMPLETED
 
 ### Problem
 - No persistent configuration
 - No admin commands for management
 - Settings lost on restart
 
-### Proposed Solution
+### Implemented Solution
+
+- ✅ SQLite database with SQLAlchemy ORM
+- ✅ Database models for config, sessions, processes, errors, bot state
+- ✅ Session persistence across bot restarts
+- ✅ 12 new slash commands (user & admin)
+- ✅ Pause/resume functionality
+- ✅ Process management with /ps and /kill
+- ✅ Error logging to database
 
 #### Database Schema
 ```sql
@@ -100,39 +108,33 @@ CREATE TABLE processes (
 );
 ```
 
-#### Proposed Commands
+#### Implemented Commands
 
 **User Commands:**
-- `/status` - Show bot health and your current session
-- `/interrupt` - Stop your current Claude process
-- `/clear` - Clear your session history
-- `/help` - Show available commands
+- ✅ `/status` - Show bot health, queue depth, and your session
+- ✅ `/help` - Show available commands
+- ✅ `/clear` - Clear your session history
+- ✅ `/start` - Welcome message
 
 **Admin Commands:**
-- `/pause` - Pause all message processing
-- `/resume` - Resume message processing
-- `/restart` - Graceful restart with session preservation
-- `/kill [process_id]` - Kill specific process
-- `/killall` - Kill all active processes
-- `/ps` - List all active processes
-- `/debug [on/off]` - Toggle debug logging
-- `/config [key] [value]` - Set configuration value
-- `/users` - List active users and sessions
+- ✅ `/pause` - Pause all message processing
+- ✅ `/resume` - Resume message processing
+- ✅ `/restart` - Graceful restart with session preservation
+- ✅ `/ps` - List all active processes with details
+- ✅ `/kill [process_id]` - Kill specific process (supports partial IDs)
+- ✅ `/killall` - Kill all active processes
+- ✅ `/debug [on/off]` - Toggle debug logging
+- ✅ `/errors` - Show recent errors from database
 
-### Design Questions
-- **Authorization model**: How to identify admins?
-  - Reuse ALLOWED_USERS for all commands?
-  - Separate ADMIN_USERS list?
-  - Role-based with levels?
+### Implementation Notes
 
-- **Command syntax**: How to handle parameters?
-  - `/config debug true` or `/config debug=true`?
-  - `/kill 12345` or `/kill process_id=12345`?
-
-- **Persistence strategy**: When to write to DB?
-  - Every config change immediately?
-  - Batch writes every N seconds?
-  - Write-through cache?
+- **Authorization**: All ALLOWED_USERS are admins (simple model)
+- **Session persistence**: Sessions survive restarts via SQLite
+- **Pause state**: Persisted in database, affects all handlers
+- **Process tracking**: In-memory dict + database logging
+- **Error logging**: Automatically logged to database
+- **Command syntax**: Space-separated parameters (`/kill abc123`, `/debug on`)
+- **Database location**: Configured via DATABASE_URL in .env
 
 ## 4. Process Interruption from Telegram
 
