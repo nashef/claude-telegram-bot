@@ -24,7 +24,7 @@ class ClaudeRequest:
     prompt: str
     update: Update
     context: ContextTypes.DEFAULT_TYPE
-    source: str  # "user_text", "photo", "heartbeat"
+    source: str  # "user_text", "photo", "audio", "heartbeat"
 
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
@@ -63,6 +63,7 @@ async def claude_worker():
             source_emoji = {
                 "user_text": "🔧",
                 "photo": "📷",
+                "audio": "🎵",
                 "heartbeat": "💭"
             }.get(request.source, "❓")
 
@@ -70,6 +71,7 @@ async def claude_worker():
             status_prefix = {
                 "user_text": "",
                 "photo": "📷 Photo notification\n\n",
+                "audio": "🎵 Audio notification\n\n",
                 "heartbeat": "💭 Internal monologue\n\n"
             }.get(request.source, "")
 
@@ -363,4 +365,61 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update=update,
         context=context,
         source="photo"
+    ))
+
+
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle audio messages - save to Jarvis/tmp and notify Claude."""
+    user_id = update.effective_user.id
+
+    # Security check
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Get the audio file
+    audio = update.message.audio or update.message.voice
+
+    # Download the audio
+    audio_file = await audio.get_file()
+
+    # Generate filename with appropriate extension
+    import time
+    timestamp = int(time.time())
+    # Try to get original filename or use generic name
+    if update.message.audio and update.message.audio.file_name:
+        original_name = update.message.audio.file_name
+        extension = original_name.split('.')[-1] if '.' in original_name else 'mp3'
+        filename = f"telegram_audio_{timestamp}.{extension}"
+    else:
+        # Voice messages are typically OGG format
+        filename = f"telegram_voice_{timestamp}.ogg"
+
+    filepath = f"{settings.approved_directory}/tmp/{filename}"
+
+    # Ensure tmp directory exists
+    import os
+    os.makedirs(f"{settings.approved_directory}/tmp", exist_ok=True)
+
+    # Download and save
+    await audio_file.download_to_drive(filepath)
+
+    logger.info(f"Saved audio to {filepath}")
+
+    # Get caption if any
+    caption = update.message.caption or "no caption"
+
+    # Determine if it's a voice message or audio file
+    audio_type = "voice message" if update.message.voice else "audio file"
+
+    # Create notification message for Claude
+    notification = f"leaf sent you a {audio_type}: {filepath} Caption: {caption}"
+
+    # Enqueue audio notification for worker to process
+    logger.info(f"Enqueuing audio notification: {filename}")
+    await claude_queue.put(ClaudeRequest(
+        prompt=notification,
+        update=update,
+        context=context,
+        source="audio"
     ))
