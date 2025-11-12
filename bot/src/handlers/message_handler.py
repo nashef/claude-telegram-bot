@@ -29,6 +29,9 @@ class ClaudeRequest:
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
 
+# Store last context for heartbeat messages
+_last_request: ClaudeRequest | None = None
+
 # Note: No confirmation system - Claude executes actions directly (like richardatct)
 
 
@@ -50,12 +53,33 @@ async def _send_typing_periodically(context: ContextTypes.DEFAULT_TYPE, update: 
 
 async def claude_worker():
     """Single worker that processes all Claude requests sequentially from the queue."""
+    global _last_request
     logger.info("Claude worker: started")
 
     while True:
         try:
-            # Wait for next request
-            request = await claude_queue.get()
+            # Wait for next request with timeout for heartbeat
+            try:
+                request = await asyncio.wait_for(
+                    claude_queue.get(),
+                    timeout=settings.heartbeat_interval_seconds
+                )
+            except asyncio.TimeoutError:
+                # No messages for timeout period - send heartbeat if enabled
+                if settings.heartbeat_enabled and _last_request is not None:
+                    logger.info(f"🔔 Heartbeat triggered after {settings.heartbeat_interval_seconds}s of inactivity")
+                    request = ClaudeRequest(
+                        prompt=settings.heartbeat_message,
+                        update=_last_request.update,
+                        context=_last_request.context,
+                        source="heartbeat"
+                    )
+                else:
+                    # No last request yet or heartbeat disabled, just continue waiting
+                    continue
+
+            # Store this request for future heartbeats
+            _last_request = request
 
             logger.info(f"Claude worker: processing {request.source} request")
 
@@ -200,53 +224,6 @@ async def claude_worker():
             claude_queue.task_done()
 
 
-async def _heartbeat_monitor(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    last_activity_tracker: dict
-):
-    """Monitor for silence and send internal monologue prompt to Claude."""
-    if not settings.heartbeat_enabled:
-        logger.info("Heartbeat monitor: disabled in settings")
-        return
-
-    check_interval = 10  # Check every 10 seconds
-    heartbeat_triggered = False
-
-    logger.info(f"Heartbeat monitor: started (threshold={settings.heartbeat_interval_seconds}s, check_interval={check_interval}s)")
-
-    try:
-        while True:
-            await asyncio.sleep(check_interval)
-
-            current_time = asyncio.get_event_loop().time()
-            silence_duration = current_time - last_activity_tracker['time']
-
-            logger.debug(f"Heartbeat monitor: silence={silence_duration:.1f}s, threshold={settings.heartbeat_interval_seconds}s")
-
-            # Check if we've been silent for longer than the threshold
-            if silence_duration >= settings.heartbeat_interval_seconds and not heartbeat_triggered:
-                logger.info(f"🔔 Heartbeat triggered after {silence_duration:.0f}s of silence")
-                heartbeat_triggered = True
-
-                logger.info(f"Heartbeat: enqueuing internal monologue: '{settings.heartbeat_message[:50]}...'")
-
-                # Enqueue heartbeat request to worker
-                await claude_queue.put(ClaudeRequest(
-                    prompt=settings.heartbeat_message,
-                    update=update,
-                    context=context,
-                    source="heartbeat"
-                ))
-
-                # Reset flag so it can trigger again later
-                heartbeat_triggered = False
-
-    except asyncio.CancelledError:
-        logger.info("Heartbeat monitor: stopped (task cancelled)")
-        pass
-    except Exception as e:
-        logger.error(f"Heartbeat monitor error: {e}", exc_info=True)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,31 +263,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not security_validator.check_rate_limit(user_id):
         await update.message.reply_text("⏱️ Rate limit exceeded. Please wait.")
         return
-
-    # Get or initialize persistent activity tracker (shared across messages)
-    if 'activity_tracker' not in context.user_data:
-        context.user_data['activity_tracker'] = {'time': asyncio.get_event_loop().time()}
-        logger.debug(f"Activity tracker initialized at {context.user_data['activity_tracker']['time']}")
-    else:
-        # Update activity time for new incoming message
-        context.user_data['activity_tracker']['time'] = asyncio.get_event_loop().time()
-        logger.debug(f"Activity tracker updated for new message at {context.user_data['activity_tracker']['time']}")
-
-    # Cancel any existing heartbeat task and start a new one
-    if settings.heartbeat_enabled:
-        # Cancel old heartbeat if it exists
-        old_heartbeat = context.user_data.get('heartbeat_task')
-        if old_heartbeat and not old_heartbeat.done():
-            logger.info("Cancelling existing heartbeat task")
-            old_heartbeat.cancel()
-            try:
-                await old_heartbeat
-            except asyncio.CancelledError:
-                pass
-
-        logger.info("Creating new heartbeat monitor task")
-        heartbeat_task = asyncio.create_task(_heartbeat_monitor(update, context, context.user_data['activity_tracker']))
-        context.user_data['heartbeat_task'] = heartbeat_task
 
     # Enqueue message for worker to process
     logger.info(f"Enqueuing user message: {message_text[:50]}...")
