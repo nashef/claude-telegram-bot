@@ -11,6 +11,7 @@ from telegram.constants import ChatAction
 from src.claude.cli_executor import ClaudeProcessManager, StreamUpdate
 from src.security.validator import security_validator
 from src.config.settings import settings
+from src.utils.error_handler import error_handler, categorize_error
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ClaudeRequest:
     prompt: str
     update: Update
     context: ContextTypes.DEFAULT_TYPE
-    source: str  # "user_text", "photo", "audio", "heartbeat"
+    source: str  # "user_text", "photo", "audio", "document", "heartbeat"
 
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
@@ -51,20 +52,33 @@ async def _send_typing_periodically(context: ContextTypes.DEFAULT_TYPE, update: 
         logger.debug(f"Typing indicator error: {e}")
 
 
-async def claude_worker():
+async def claude_worker(shutdown_event=None):
     """Single worker that processes all Claude requests sequentially from the queue."""
     global _last_request
     logger.info("Claude worker: started")
 
     while True:
+        # Check for shutdown signal
+        if shutdown_event and shutdown_event.is_set():
+            logger.info("Claude worker: shutdown signal received, exiting...")
+            break
+
+        dequeued = False  # Track if we actually dequeued an item
         try:
             # Wait for next request with timeout for heartbeat
             try:
+                # Use a shorter timeout if shutdown is requested
+                timeout = 1.0 if (shutdown_event and shutdown_event.is_set()) else settings.heartbeat_interval_seconds
                 request = await asyncio.wait_for(
                     claude_queue.get(),
-                    timeout=settings.heartbeat_interval_seconds
+                    timeout=timeout
                 )
+                dequeued = True  # We successfully dequeued an item
             except asyncio.TimeoutError:
+                # Check for shutdown again
+                if shutdown_event and shutdown_event.is_set():
+                    break
+
                 # No messages for timeout period - send heartbeat if enabled
                 if settings.heartbeat_enabled and _last_request is not None:
                     logger.info(f"🔔 Heartbeat triggered after {settings.heartbeat_interval_seconds}s of inactivity")
@@ -74,6 +88,7 @@ async def claude_worker():
                         context=_last_request.context,
                         source="heartbeat"
                     )
+                    # Note: dequeued remains False - synthetic request
                 else:
                     # No last request yet or heartbeat disabled, just continue waiting
                     continue
@@ -88,6 +103,7 @@ async def claude_worker():
                 "user_text": "🔧",
                 "photo": "📷",
                 "audio": "🎵",
+                "document": "📄",
                 "heartbeat": "💭"
             }.get(request.source, "❓")
 
@@ -96,6 +112,7 @@ async def claude_worker():
                 "user_text": "",
                 "photo": "📷 Photo notification\n\n",
                 "audio": "🎵 Audio notification\n\n",
+                "document": "📄 File received\n\n",
                 "heartbeat": "💭 Internal monologue\n\n"
             }.get(request.source, "")
 
@@ -203,6 +220,10 @@ async def claude_worker():
 
             logger.info(f"Claude worker: completed {request.source} request")
 
+        except asyncio.CancelledError:
+            # Let cancellation propagate for clean shutdown
+            logger.info("Claude worker: task cancelled")
+            raise
         except Exception as e:
             logger.error(f"Claude worker: error processing request: {e}", exc_info=True)
             # Stop typing on error
@@ -212,20 +233,38 @@ async def claude_worker():
                     await typing_task
                 except asyncio.CancelledError:
                     pass
+
+            # Categorize error and send appropriate message
+            category, user_message = categorize_error(e)
+            logger.info(f"Error category: {category}")
+
             try:
                 await request.context.bot.send_message(
                     chat_id=request.update.effective_chat.id,
-                    text=f"❌ Error processing request: {str(e)[:100]}"
+                    text=user_message,
+                    parse_mode="Markdown"
                 )
-            except:
-                pass
+            except Exception as send_error:
+                logger.error(f"Failed to send error message: {send_error}")
+                # Try simple message without markdown
+                try:
+                    await request.context.bot.send_message(
+                        chat_id=request.update.effective_chat.id,
+                        text="❌ An error occurred. Please try again."
+                    )
+                except:
+                    pass
         finally:
-            # Mark task as done
-            claude_queue.task_done()
+            # Only mark task as done if we actually dequeued an item
+            if dequeued:
+                claude_queue.task_done()
+
+    logger.info("Claude worker: exited gracefully")
 
 
 
 
+@error_handler
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     user_id = update.effective_user.id
@@ -250,6 +289,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Note: Removed detect_action_in_response - Claude executes actions directly now
 
 
+@error_handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle user messages."""
     user_id = update.effective_user.id
@@ -274,8 +314,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
 
 
+@error_handler
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle photo messages - save to Jarvis/tmp and notify Claude."""
+    logger.info("handle_photo called!")
     user_id = update.effective_user.id
 
     # Security check
@@ -320,8 +362,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
 
 
+@error_handler
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle audio messages - save to Jarvis/tmp and notify Claude."""
+    logger.info("handle_audio called!")
     user_id = update.effective_user.id
 
     # Security check
@@ -374,4 +418,57 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update=update,
         context=context,
         source="audio"
+    ))
+
+
+@error_handler
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle document/file uploads - save to Jarvis/tmp and notify Claude."""
+    logger.info("handle_document called!")
+    user_id = update.effective_user.id
+
+    # Security check
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Get the document
+    document = update.message.document
+
+    # Download the document
+    doc_file = await document.get_file()
+
+    # Generate filename with original name if available
+    import time
+    timestamp = int(time.time())
+    if document.file_name:
+        filename = f"telegram_doc_{timestamp}_{document.file_name}"
+    else:
+        filename = f"telegram_doc_{timestamp}"
+
+    filepath = f"{settings.approved_directory}/tmp/{filename}"
+
+    # Ensure tmp directory exists
+    import os
+    os.makedirs(f"{settings.approved_directory}/tmp", exist_ok=True)
+
+    # Download and save
+    await doc_file.download_to_drive(filepath)
+
+    logger.info(f"Saved document to {filepath}")
+
+    # Get caption and mime type
+    caption = update.message.caption or "no caption"
+    mime_type = document.mime_type or "unknown type"
+
+    # Create notification message for Claude
+    notification = f"leaf sent you a file: {filepath} (Type: {mime_type}) Caption: {caption}"
+
+    # Enqueue document notification for worker to process
+    logger.info(f"Enqueuing document notification: {filename}")
+    await claude_queue.put(ClaudeRequest(
+        prompt=notification,
+        update=update,
+        context=context,
+        source="document"
     ))
