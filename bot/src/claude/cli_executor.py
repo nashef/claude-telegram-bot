@@ -145,9 +145,9 @@ class ClaudeProcessManager:
         """Build Claude CLI command (richardatct approach)."""
         cmd = ["claude"]  # CLI binary
 
+        cmd.extend(["--continue"])
         if continue_session and not prompt:
             # Continue existing session without new prompt
-            cmd.extend(["--continue"])
             if session_id:
                 cmd.extend(["--resume", session_id])
         elif session_id and prompt and continue_session:

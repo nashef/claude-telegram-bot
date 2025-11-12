@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # Features
     enable_file_uploads: bool = Field(True, env="ENABLE_FILE_UPLOADS")
 
+    # Heartbeat Configuration
+    heartbeat_enabled: bool = Field(True, env="HEARTBEAT_ENABLED")
+    heartbeat_interval_seconds: int = Field(300, env="HEARTBEAT_INTERVAL_SECONDS")  # 5 minutes
+    heartbeat_message: str = Field(
+        "Hi, this is your internal monologue. Nothing has happened recently. "
+        "You can choose not to do anything, but you have agency and may act independently if you want to.",
+        env="HEARTBEAT_MESSAGE"
+    )
+
     # Development
     debug: bool = Field(False, env="DEBUG")
     log_level: str = Field("INFO", env="LOG_LEVEL")
