@@ -4,7 +4,7 @@ Loads environment variables and validates configuration.
 """
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Claude Configuration
     use_sdk: bool = Field(False, env="USE_SDK")
+    claude_model: str = Field("sonnet", env="CLAUDE_MODEL")
     claude_max_turns: int = Field(10, env="CLAUDE_MAX_TURNS")
     claude_max_cost_per_user: float = Field(10.0, env="CLAUDE_MAX_COST_PER_USER")
     claude_timeout_seconds: int = Field(900, env="CLAUDE_TIMEOUT_SECONDS")
@@ -63,6 +64,8 @@ class Settings(BaseSettings):
     # Development
     debug: bool = Field(False, env="DEBUG")
     log_level: str = Field("INFO", env="LOG_LEVEL")
+    log_file: Optional[str] = Field(None, env="LOG_FILE")
+    log_file_level: str = Field("DEBUG", env="LOG_FILE_LEVEL")
 
     # Database
     database_url: str = Field("sqlite:///telegram_bot.db", env="DATABASE_URL")

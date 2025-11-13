@@ -85,12 +85,12 @@ class DatabaseManager:
                 user_session.session_id = session_id
                 user_session.last_used = datetime.utcnow()
                 if metadata:
-                    user_session.metadata = metadata
+                    user_session.extra_data = metadata
             else:
                 user_session = UserSession(
                     user_id=user_id,
                     session_id=session_id,
-                    metadata=metadata
+                    extra_data=metadata
                 )
                 session.add(user_session)
             logger.info(f"Session set for user {user_id}: {session_id[:20]}...")
@@ -115,16 +115,26 @@ class DatabaseManager:
     # Process tracking
     @staticmethod
     def track_process(process_id: str, user_id: int, command: str) -> None:
-        """Track a new Claude process."""
+        """Track a new Claude process (upsert: update if exists, insert if new)."""
         with db_session() as session:
-            process = ProcessTracker(
-                process_id=process_id,
-                user_id=user_id,
-                command=command[:500] if command else None,  # Truncate long commands
-                status="running"
-            )
-            session.add(process)
-            logger.info(f"Process tracked: {process_id} for user {user_id}")
+            process = session.query(ProcessTracker).filter_by(process_id=process_id).first()
+            if process:
+                # Update existing process
+                process.command = command[:500] if command else None
+                process.status = "running"
+                process.started_at = datetime.utcnow()
+                process.ended_at = None
+                logger.info(f"Process updated: {process_id} for user {user_id}")
+            else:
+                # Create new process
+                process = ProcessTracker(
+                    process_id=process_id,
+                    user_id=user_id,
+                    command=command[:500] if command else None,
+                    status="running"
+                )
+                session.add(process)
+                logger.info(f"Process tracked: {process_id} for user {user_id}")
 
     @staticmethod
     def update_process_status(process_id: str, status: str) -> None:

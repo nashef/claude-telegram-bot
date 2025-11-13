@@ -164,6 +164,10 @@ class ClaudeProcessManager:
         cmd.extend(["--output-format", "stream-json"])
         cmd.extend(["--verbose"])
 
+        # Model selection
+        if hasattr(self.config, 'claude_model') and self.config.claude_model:
+            cmd.extend(["--model", self.config.claude_model])
+
         # Safety limits
         cmd.extend(["--max-turns", str(self.config.claude_max_turns)])
 

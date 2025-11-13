@@ -95,7 +95,7 @@ CREATE TABLE sessions (
     session_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_used TIMESTAMP,
-    metadata TEXT  -- JSON field for additional data
+    extra_data TEXT  -- JSON field for additional data
 );
 
 -- Process tracking (optional - could stay in memory)
@@ -174,46 +174,48 @@ CREATE TABLE processes (
   - Reset session completely?
   - User choice?
 
-## 5. Message Batching for Rapid Messages
+## 5. Message Batching for Rapid Messages ✅ COMPLETED
 
 ### Problem
 - Each message processed separately
 - Users often send multiple messages quickly
 - Wastes API calls and context
 
-### Proposed Solution
-```python
-# Message collection algorithm:
-# 1. Receive first message
-# 2. Start 1-second timer
-# 3. Collect additional messages while:
-#    - User is typing (check indicator)
-#    - OR new messages arrive within 4s
-#    - Maximum collection time: 30s
-# 4. Concatenate all messages with newlines
-# 5. Send as single prompt to Claude
-```
+### Implemented Solution
 
-### Design Questions
-- **Collection parameters**: What timing works best?
-  - Initial delay: 0.5s, 1s, or 2s?
-  - Idle timeout: 2s, 4s, or until typing stops?
-  - Maximum collection time: 30s or 60s?
+- ✅ **Silent batching**: No user-facing feedback during collection
+- ✅ **Timing strategy**:
+  - First message starts a 2-second idle timer
+  - Each new message resets the 2-second timer
+  - Maximum batch duration: 20 seconds (prevents indefinite waiting)
+  - After idle timeout or max duration, submit all messages as one prompt
+- ✅ **Message combination**: Simple newline concatenation
+- ✅ **Commands bypass batching**: Commands like `/status` always execute immediately
 
-- **Message combination**: How to merge messages?
-  - Simple newline concatenation?
-  - Add timestamps?
-  - Preserve as separate messages with markers?
+**Key implementation details:**
+- Per-user batch state tracking (`_batch_states` dict)
+- Asynchronous timer task that auto-cancels/restarts on new messages
+- Messages combined with `"\n".join(messages)` before submission
+- Batch state cleaned up after submission
 
-- **User feedback**: How to show batching is happening?
-  - "📝 Collecting messages..." status?
-  - Show message count?
-  - Allow manual "send now" trigger?
+### Notification & UX Improvements (Bonus)
 
-- **Edge cases**: How to handle:
-  - Commands mixed with regular messages?
-  - Media/files between messages?
-  - Different message types?
+Also implemented alongside batching:
+
+- ✅ **Removed "Processing..." message** - no more spam notifications
+- ✅ **Typing indicator shows Claude activity** - turns ON when subprocess starts, OFF when it ends
+- ✅ **Silent thinking updates** - tool use and assistant thinking appear with `disable_notification=True`
+- ✅ **Final result notifies** - only the actual result triggers notification bell
+- ✅ **Smart message handling**:
+  - If thinking message exists, delete and resend final result (to enable notification)
+  - If no thinking occurred, send result directly
+  - Long responses (>4096 chars) split into chunks, only first chunk notifies
+
+**User experience:**
+- No notification spam from "Processing..." or thinking updates
+- Notification bell ONLY when final results are ready
+- Typing indicator shows when Claude is actively working
+- Seamless batching of rapid-fire messages
 
 ## Implementation Priority
 

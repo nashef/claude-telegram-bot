@@ -12,7 +12,7 @@ from src.config.settings import settings
 from src.security.validator import security_validator
 from src.utils.error_handler import error_handler
 from src.database.manager import db_manager
-from src.handlers.message_handler import claude_executor, claude_queue
+from src.handlers.message_handler import claude_executor, claude_queue, _thread_states, _submit_thread
 
 logger = logging.getLogger(__name__)
 
@@ -371,3 +371,82 @@ async def errors_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg += f"  Msg: {error.error_message[:50]}...\n\n"
 
     await update.message.reply_text(error_msg, parse_mode="Markdown")
+
+
+@error_handler
+async def thread_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /thread command - start a thread."""
+    user_id = update.effective_user.id
+
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Check if already in a thread
+    if user_id in _thread_states:
+        thread = _thread_states[user_id]
+        await update.message.reply_text(
+            f"💬 Already in a thread ({len(thread.messages)} messages). Send **X/** or **/send** to submit.",
+            parse_mode="Markdown",
+            disable_notification=True
+        )
+        return
+
+    # Send instructions
+    await update.message.reply_text(
+        "🧵 **Thread started!**\n\n"
+        "Send your messages. When done, send:\n"
+        "• **X/** or **/send** to submit\n"
+        "• 🏁 or ✅ to submit\n\n"
+        "Tip: You can also start threads with **1/** or 🧵",
+        parse_mode="Markdown",
+        disable_notification=True
+    )
+
+    # Create thread state
+    current_time = asyncio.get_event_loop().time()
+    from src.handlers.message_handler import _thread_timer, ThreadState
+
+    timer_task = asyncio.create_task(_thread_timer(user_id))
+
+    _thread_states[user_id] = ThreadState(
+        messages=[],  # Empty to start, user will add messages
+        update=update,
+        context=context,
+        timer_task=timer_task,
+        start_time=current_time,
+        reminder_sent=False
+    )
+
+    logger.info(f"Thread started by command for user {user_id}")
+
+
+@error_handler
+async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /send command - submit current thread."""
+    user_id = update.effective_user.id
+
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Check if in a thread
+    if user_id not in _thread_states:
+        await update.message.reply_text(
+            "❌ No active thread. Start one with **/thread**, **1/**, or 🧵",
+            parse_mode="Markdown",
+            disable_notification=True
+        )
+        return
+
+    thread = _thread_states[user_id]
+
+    if not thread.messages:
+        await update.message.reply_text(
+            "❌ Thread is empty. Send some messages first!",
+            disable_notification=True
+        )
+        return
+
+    logger.info(f"Thread submitted by command for user {user_id}")
+    await _submit_thread(user_id)

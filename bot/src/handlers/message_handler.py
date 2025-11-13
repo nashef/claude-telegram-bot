@@ -34,7 +34,97 @@ claude_queue: Queue[ClaudeRequest] = Queue()
 # Store last context for heartbeat messages
 _last_request: ClaudeRequest | None = None
 
+# Message threading state per user (Twitter-style)
+@dataclass
+class ThreadState:
+    """Track threading state for a user."""
+    messages: list[str]
+    update: Update
+    context: ContextTypes.DEFAULT_TYPE
+    timer_task: asyncio.Task | None
+    start_time: float
+    reminder_sent: bool
+
+_thread_states: dict[int, ThreadState] = {}
+
+# Thread markers
+THREAD_START_MARKERS = ["1/", "🧵"]
+THREAD_END_MARKERS = ["x/", "X/", "🏁", "✅", "✔️"]
+
 # Note: No confirmation system - Claude executes actions directly (like richardatct)
+
+
+def _is_thread_start(text: str) -> bool:
+    """Check if message starts a thread."""
+    return any(text.startswith(marker) for marker in THREAD_START_MARKERS)
+
+
+def _is_thread_end(text: str) -> bool:
+    """Check if message ends a thread."""
+    # Check if any end marker is at the start or end of the message
+    for marker in THREAD_END_MARKERS:
+        if text.startswith(marker) or text.endswith(marker):
+            return True
+    return False
+
+
+async def _submit_thread(user_id: int):
+    """Submit threaded messages for a user."""
+    global _thread_states
+
+    if user_id not in _thread_states:
+        return
+
+    thread = _thread_states[user_id]
+
+    # Cancel timer if still running
+    if thread.timer_task and not thread.timer_task.done():
+        thread.timer_task.cancel()
+
+    # Combine all messages
+    combined_prompt = "\n".join(thread.messages)
+
+    logger.info(f"Submitting thread of {len(thread.messages)} messages for user {user_id}")
+
+    # Enqueue the combined request
+    await claude_queue.put(ClaudeRequest(
+        prompt=combined_prompt,
+        update=thread.update,
+        context=thread.context,
+        source="user_text"
+    ))
+
+    # Clear thread state
+    del _thread_states[user_id]
+
+
+async def _thread_timer(user_id: int):
+    """Timer that sends reminder after 20s if thread not completed."""
+    global _thread_states
+
+    if user_id not in _thread_states:
+        return
+
+    thread = _thread_states[user_id]
+
+    try:
+        # Wait 20 seconds
+        await asyncio.sleep(20.0)
+
+        # Check if thread still exists and reminder not sent
+        if user_id in _thread_states and not thread.reminder_sent:
+            thread.reminder_sent = True
+            await thread.context.bot.send_message(
+                chat_id=thread.update.effective_chat.id,
+                text="💬 Still there? (Send **X/** to send what I have)",
+                parse_mode="Markdown",
+                disable_notification=True
+            )
+            logger.info(f"Sent thread reminder to user {user_id}")
+
+    except asyncio.CancelledError:
+        # Timer was cancelled, thread was submitted or new message arrived
+        pass
 
 
 async def _send_typing_periodically(context: ContextTypes.DEFAULT_TYPE, update: Update):
@@ -108,7 +198,7 @@ async def claude_worker(shutdown_event=None):
                 "heartbeat": "💭"
             }.get(request.source, "❓")
 
-            # Send initial "processing" message
+            # Status prefix for non-text messages
             status_prefix = {
                 "user_text": "",
                 "photo": "📷 Photo notification\n\n",
@@ -117,23 +207,17 @@ async def claude_worker(shutdown_event=None):
                 "heartbeat": "💭 Internal monologue\n\n"
             }.get(request.source, "")
 
-            thinking_msg = await request.context.bot.send_message(
-                chat_id=request.update.effective_chat.id,
-                text=f"{status_prefix}🤔 Processing..."
-            )
-
-            # Start typing indicator
-            typing_task = asyncio.create_task(
-                _send_typing_periodically(request.context, request.update)
-            )
+            # No "Processing..." message - will create message only if thinking output appears
+            thinking_msg = None
+            typing_task = None
 
             # Initialize streaming state
             last_update_time = 0
 
             # Streaming callback for this request
             async def stream_callback(update_obj: StreamUpdate):
-                """Update progress message with streaming updates."""
-                nonlocal last_update_time
+                """Update progress message with streaming updates (silent notifications)."""
+                nonlocal last_update_time, thinking_msg
                 current_time = asyncio.get_event_loop().time()
 
                 # Log all stream updates (not throttled)
@@ -167,11 +251,22 @@ async def claude_worker(shutdown_event=None):
                     )
                     progress_text = f"{status_prefix}🤖 **Working...**\n\n_{content_preview}_"
                 elif update_obj.type == "result":
-                    progress_text = f"{status_prefix}✅ **Completed!**"
+                    # Don't show "Completed!" - final result will be shown with notification
+                    return
 
                 if progress_text:
                     try:
-                        await thinking_msg.edit_text(progress_text, parse_mode="Markdown")
+                        if thinking_msg is None:
+                            # Create message silently on first update
+                            thinking_msg = await request.context.bot.send_message(
+                                chat_id=request.update.effective_chat.id,
+                                text=progress_text,
+                                parse_mode="Markdown",
+                                disable_notification=True  # Silent thinking updates
+                            )
+                        else:
+                            # Update existing message (also silent)
+                            await thinking_msg.edit_text(progress_text, parse_mode="Markdown")
                     except Exception as e:
                         logger.debug(f"Failed to update progress: {e}")
 
@@ -183,6 +278,11 @@ async def claude_worker(shutdown_event=None):
             if not session_id:
                 session_id = request.context.user_data.get('claude_session_id')
 
+            # Start typing indicator when Claude subprocess starts
+            typing_task = asyncio.create_task(
+                _send_typing_periodically(request.context, request.update)
+            )
+
             # Execute Claude with the request
             logger.info(f"Claude worker: calling executor with prompt: {request.prompt[:100]}...")
             response_obj = await claude_executor.execute_command(
@@ -193,16 +293,16 @@ async def claude_worker(shutdown_event=None):
                 stream_callback=stream_callback
             )
 
-            # Track process in database
-            if user_id and response_obj.session_id:
-                db_manager.track_process(response_obj.session_id, user_id, request.prompt[:500])
-
-            # Stop typing indicator
+            # Stop typing indicator when Claude subprocess ends
             typing_task.cancel()
             try:
                 await typing_task
             except asyncio.CancelledError:
                 pass
+
+            # Track process in database
+            if user_id and response_obj.session_id:
+                db_manager.track_process(response_obj.session_id, user_id, request.prompt[:500])
 
             # Update session ID in both database and context
             if response_obj.session_id:
@@ -214,21 +314,48 @@ async def claude_worker(shutdown_event=None):
             if 'activity_tracker' in request.context.user_data:
                 request.context.user_data['activity_tracker']['time'] = asyncio.get_event_loop().time()
 
-            # Send Claude's response
+            # Send Claude's response with notification enabled
             response = response_obj.content
             if response:
                 if len(response) > 4096:
+                    # Response too long - delete thinking msg and send in chunks
+                    if thinking_msg:
+                        await thinking_msg.delete()
+
                     chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
-                    await thinking_msg.delete()
-                    for chunk in chunks:
+                    for i, chunk in enumerate(chunks):
+                        # Only notify on first chunk
                         await request.context.bot.send_message(
                             chat_id=request.update.effective_chat.id,
-                            text=chunk
+                            text=chunk,
+                            disable_notification=(i > 0)  # Only first chunk notifies
                         )
                 else:
-                    await thinking_msg.edit_text(response)
+                    # Response fits in one message
+                    if thinking_msg:
+                        # Edit existing thinking message
+                        # Note: Telegram doesn't support changing disable_notification on edits
+                        # So we delete and resend to get notification
+                        await thinking_msg.delete()
+                        await request.context.bot.send_message(
+                            chat_id=request.update.effective_chat.id,
+                            text=response,
+                            disable_notification=False  # Final result notifies
+                        )
+                    else:
+                        # No thinking message, send directly with notification
+                        await request.context.bot.send_message(
+                            chat_id=request.update.effective_chat.id,
+                            text=response,
+                            disable_notification=False
+                        )
             else:
-                await thinking_msg.edit_text(f"{status_prefix}(no response)")
+                # No response - send error message
+                await request.context.bot.send_message(
+                    chat_id=request.update.effective_chat.id,
+                    text=f"{status_prefix}(no response)",
+                    disable_notification=False
+                )
 
             logger.info(f"Claude worker: completed {request.source} request")
 
@@ -303,7 +430,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @error_handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle user messages."""
+    """Handle user messages with Twitter-style threading."""
+    global _thread_states
+
     user_id = update.effective_user.id
     message_text = update.message.text
 
@@ -321,14 +450,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
-    # Enqueue message for worker to process
-    logger.info(f"Enqueuing user message: {message_text[:50]}...")
-    await claude_queue.put(ClaudeRequest(
-        prompt=message_text,
-        update=update,
-        context=context,
-        source="user_text"
-    ))
+    logger.info(f"Received user message: {message_text[:50]}...")
+
+    # Check if this is a thread marker
+    is_start = _is_thread_start(message_text)
+    is_end = _is_thread_end(message_text)
+
+    # Check if we're already in a thread for this user
+    if user_id in _thread_states:
+        thread = _thread_states[user_id]
+
+        # Add message to thread
+        thread.messages.append(message_text)
+        thread.update = update
+        thread.context = context
+
+        logger.debug(f"Added to thread (now {len(thread.messages)} messages) for user {user_id}")
+
+        # Check if this message ends the thread
+        if is_end:
+            logger.info(f"Thread end marker detected for user {user_id}")
+            await _submit_thread(user_id)
+        # If thread is restarted (new 1/ while already in thread), submit current and start new
+        elif is_start and len(thread.messages) > 1:
+            logger.info(f"Thread restart detected for user {user_id}, submitting current thread")
+            # Remove the new start message from current thread
+            thread.messages.pop()
+            await _submit_thread(user_id)
+            # Start new thread with the start message
+            current_time = asyncio.get_event_loop().time()
+            timer_task = asyncio.create_task(_thread_timer(user_id))
+            _thread_states[user_id] = ThreadState(
+                messages=[message_text],
+                update=update,
+                context=context,
+                timer_task=timer_task,
+                start_time=current_time,
+                reminder_sent=False
+            )
+            logger.info(f"Started new thread for user {user_id}")
+
+    elif is_start:
+        # Start a new thread
+        current_time = asyncio.get_event_loop().time()
+        timer_task = asyncio.create_task(_thread_timer(user_id))
+
+        _thread_states[user_id] = ThreadState(
+            messages=[message_text],
+            update=update,
+            context=context,
+            timer_task=timer_task,
+            start_time=current_time,
+            reminder_sent=False
+        )
+
+        logger.info(f"Started new thread for user {user_id}")
+
+    else:
+        # Not in a thread and no thread marker - process immediately
+        logger.info(f"Immediate processing (no thread) for user {user_id}")
+        await claude_queue.put(ClaudeRequest(
+            prompt=message_text,
+            update=update,
+            context=context,
+            source="user_text"
+        ))
 
 
 @error_handler

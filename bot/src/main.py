@@ -20,15 +20,40 @@ from src.handlers.commands import (
     status_command, help_command, clear_command,
     pause_command, resume_command, ps_command,
     kill_command, killall_command, debug_command,
-    restart_command, errors_command
+    restart_command, errors_command, thread_command, send_command
 )
 from src.database.models import init_database, close_database
 
 # Configure logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=getattr(logging, settings.log_level.upper()),
-)
+def setup_logging():
+    """Configure logging with console and optional file output."""
+    # Create root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Capture everything, handlers will filter
+
+    # Remove any existing handlers
+    root_logger.handlers.clear()
+
+    # Create formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+
+    # Console handler with configured level
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(getattr(logging, settings.log_level.upper()))
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # File handler if configured
+    if settings.log_file:
+        file_handler = logging.FileHandler(settings.log_file)
+        file_handler.setLevel(getattr(logging, settings.log_file_level.upper()))
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+        logging.info(f"File logging enabled: {settings.log_file} (level: {settings.log_file_level})")
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Global references for cleanup
@@ -129,6 +154,7 @@ async def async_main():
     logger.info("Starting Telegram Bot...")
     logger.info(f"Approved directory: {settings.approved_directory}")
     logger.info(f"Allowed users: {settings.allowed_users}")
+    logger.info(f"Claude model: {settings.claude_model}")
     logger.info(f"Allowed tools: {settings.claude_allowed_tools}")
 
     # Create application
@@ -148,6 +174,8 @@ async def async_main():
     application.add_handler(CommandHandler("debug", debug_command))
     application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("errors", errors_command))
+    application.add_handler(CommandHandler("thread", thread_command))
+    application.add_handler(CommandHandler("send", send_command))
 
     # Add message handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))

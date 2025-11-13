@@ -30,7 +30,7 @@ class UserSession(Base):
     session_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    metadata = Column(JSON, nullable=True)  # For future use
+    extra_data = Column(JSON, nullable=True)  # For future use
 
     def __repr__(self):
         return f"<UserSession(user_id={self.user_id}, session_id={self.session_id})>"
@@ -61,7 +61,7 @@ class ErrorLog(Base):
     error_message = Column(Text, nullable=True)
     handler = Column(String(100), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True)
 
     def __repr__(self):
         return f"<ErrorLog(id={self.id}, user_id={self.user_id}, error_type={self.error_type})>"
