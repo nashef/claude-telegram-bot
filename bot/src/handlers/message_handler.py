@@ -195,7 +195,8 @@ async def claude_worker(shutdown_event=None):
                 "photo": "📷",
                 "audio": "🎵",
                 "document": "📄",
-                "heartbeat": "💭"
+                "heartbeat": "💭",
+                "wake_up": "👁️"
             }.get(request.source, "❓")
 
             # Status prefix for non-text messages
@@ -204,7 +205,8 @@ async def claude_worker(shutdown_event=None):
                 "photo": "📷 Photo notification\n\n",
                 "audio": "🎵 Audio notification\n\n",
                 "document": "📄 File received\n\n",
-                "heartbeat": "💭 Internal monologue\n\n"
+                "heartbeat": "💭 Internal monologue\n\n",
+                "wake_up": "👁️ Waking up\n\n"
             }.get(request.source, "")
 
             # No "Processing..." message - will create message only if thinking output appears
@@ -405,24 +407,21 @@ async def claude_worker(shutdown_event=None):
 
 @error_handler
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command."""
+    """Handle /start command - send wake-up prompt to Claude."""
     user_id = update.effective_user.id
 
     if not security_validator.is_authorized(user_id):
         await update.message.reply_text("⛔ Unauthorized access.")
         return
 
-    welcome_msg = (
-        "🤖 **Claude Code Bot**\n\n"
-        "I have access to the full Claude Code CLI.\n\n"
-        "**Available tools:**\n"
-        "📖 Read, ✍️ Write, ✏️ Edit\n"
-        "🔧 Bash, 🔍 Glob, 🔎 Grep\n"
-        "🌐 WebSearch, 📋 TodoWrite\n"
-        "🎯 Task, ⚡ Skill, 🔨 SlashCommand\n\n"
-        "Just send me a message!"
-    )
-    await update.message.reply_text(welcome_msg, parse_mode="Markdown")
+    # Send wake-up prompt to Claude
+    logger.info(f"User {user_id} started bot, sending wake-up prompt")
+    await claude_queue.put(ClaudeRequest(
+        prompt=settings.wake_up_prompt,
+        update=update,
+        context=context,
+        source="wake_up"
+    ))
 
 
 # Note: Removed detect_action_in_response - Claude executes actions directly now

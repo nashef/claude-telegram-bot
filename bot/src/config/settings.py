@@ -61,6 +61,12 @@ class Settings(BaseSettings):
         env="HEARTBEAT_MESSAGE"
     )
 
+    # Wake-up prompt sent when bot starts
+    wake_up_prompt: str = Field(
+        "You wake up from a restful sleep. leaf is here.",
+        env="WAKE_UP_PROMPT"
+    )
+
     # Development
     debug: bool = Field(False, env="DEBUG")
     log_level: str = Field("INFO", env="LOG_LEVEL")
