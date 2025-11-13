@@ -80,6 +80,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /help - Show this help message
 /clear - Clear your session
 
+**Threading:**
+/thread - Start a thread (or use 1/ or 🧵)
+/send - Submit thread (or use X/, 🏁, ✅)
+
 **Admin Commands:**
 /pause - Pause message processing
 /resume - Resume message processing
@@ -90,9 +94,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /restart - Restart the bot (sessions preserved)
 /errors - Show recent errors
 
-**Tips:**
-• Send photos/audio/documents - they'll be saved to tmp/
-• Messages are processed sequentially
+**Threading Tips:**
+• Start: **1/** or 🧵 or **/thread**
+• End: **X/** or 🏁 or ✅ or **/send**
+• 20s reminder if not completed
+• Regular messages process immediately
+
+**Other Tips:**
+• Send photos/audio/documents - saved to tmp/
+• Messages queued and processed sequentially
 • Sessions persist across restarts
 """
 
