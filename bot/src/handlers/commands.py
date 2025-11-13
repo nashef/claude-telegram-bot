@@ -200,17 +200,20 @@ async def ps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Format process list
     process_list = "📋 **Active Processes:**\n\n"
+
+    # Get all process info from database once
+    db_processes = db_manager.get_active_processes()
+    db_proc_map = {p["process_id"]: p for p in db_processes}
+
     for proc_id, proc in claude_executor.active_processes.items():
-        # Get process info from database if available
-        db_processes = db_manager.get_active_processes()
-        db_proc = next((p for p in db_processes if p.process_id == proc_id), None)
+        db_proc = db_proc_map.get(proc_id)
 
         if db_proc:
-            elapsed = (datetime.utcnow() - db_proc.started_at).total_seconds()
+            elapsed = (datetime.utcnow() - db_proc["started_at"]).total_seconds()
             process_list += f"• `{proc_id[:8]}...`\n"
-            process_list += f"  User: {db_proc.user_id}\n"
+            process_list += f"  User: {db_proc['user_id']}\n"
             process_list += f"  Time: {elapsed:.0f}s\n"
-            process_list += f"  Cmd: {db_proc.command[:50] if db_proc.command else 'N/A'}...\n\n"
+            process_list += f"  Cmd: {db_proc['command'][:50] if db_proc['command'] else 'N/A'}...\n\n"
         else:
             process_list += f"• `{proc_id[:20]}...` (no details)\n"
 

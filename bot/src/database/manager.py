@@ -148,19 +148,43 @@ class DatabaseManager:
                 logger.info(f"Process {process_id} status: {status}")
 
     @staticmethod
-    def get_active_processes() -> List[ProcessTracker]:
-        """Get all running processes."""
+    def get_active_processes() -> List[dict]:
+        """Get all running processes as dictionaries (to avoid detached instance errors)."""
         with db_session() as session:
-            return session.query(ProcessTracker).filter_by(status="running").all()
+            processes = session.query(ProcessTracker).filter_by(status="running").all()
+            # Convert to dicts while still in session context
+            return [
+                {
+                    "process_id": p.process_id,
+                    "user_id": p.user_id,
+                    "command": p.command,
+                    "started_at": p.started_at,
+                    "status": p.status,
+                    "ended_at": p.ended_at,
+                }
+                for p in processes
+            ]
 
     @staticmethod
-    def get_user_processes(user_id: int, only_active: bool = True) -> List[ProcessTracker]:
-        """Get user's processes."""
+    def get_user_processes(user_id: int, only_active: bool = True) -> List[dict]:
+        """Get user's processes as dictionaries (to avoid detached instance errors)."""
         with db_session() as session:
             query = session.query(ProcessTracker).filter_by(user_id=user_id)
             if only_active:
                 query = query.filter_by(status="running")
-            return query.all()
+            processes = query.all()
+            # Convert to dicts while still in session context
+            return [
+                {
+                    "process_id": p.process_id,
+                    "user_id": p.user_id,
+                    "command": p.command,
+                    "started_at": p.started_at,
+                    "status": p.status,
+                    "ended_at": p.ended_at,
+                }
+                for p in processes
+            ]
 
     # Bot state operations
     @staticmethod
