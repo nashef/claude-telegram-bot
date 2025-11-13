@@ -81,22 +81,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /clear - Clear your session
 
 **Threading:**
-/thread - Start a thread (or use 1/ or 🧵)
-/send - Submit thread (or use X/, 🏁, ✅)
+/thread - Start a thread (or use `1/` or 🧵)
+/send - Submit thread (or use `X/`, 🏁, ✅)
 
 **Admin Commands:**
 /pause - Pause message processing
 /resume - Resume message processing
 /ps - List active processes
-/kill <process_id> - Kill a specific process
+/kill - Kill a specific process
 /killall - Kill all active processes
-/debug <on/off> - Toggle debug mode
+/debug - Toggle debug mode
 /restart - Restart the bot (sessions preserved)
 /errors - Show recent errors
 
 **Threading Tips:**
-• Start: **1/** or 🧵 or **/thread**
-• End: **X/** or 🏁 or ✅ or **/send**
+• Start with `1/` or 🧵 or /thread
+• End with `X/` or 🏁 or ✅ or /send
 • 20s reminder if not completed
 • Regular messages process immediately
 
