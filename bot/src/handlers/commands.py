@@ -253,19 +253,28 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Kill the process
     process = claude_executor.active_processes[process_id]
     try:
+        logger.info(f"Killing process {process_id}")
         process.terminate()
+        logger.info(f"Sent SIGTERM to {process_id}")
+
         await asyncio.sleep(2)  # Grace period
+
         if process.returncode is None:
+            logger.info(f"Process still running, sending SIGKILL to {process_id}")
             process.kill()
+        else:
+            logger.info(f"Process {process_id} terminated cleanly (return code: {process.returncode})")
 
         # Remove from tracking
         del claude_executor.active_processes[process_id]
+        logger.info(f"Removed {process_id} from active processes")
 
         # Update database
         db_manager.update_process_status(process_id, "killed")
 
-        await update.message.reply_text(f"💀 Process '{process_id[:20]}...' killed.")
+        await update.message.reply_text(f"💀 Process killed: `{process_id}`")
     except Exception as e:
+        logger.error(f"Error killing process {process_id}: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Failed to kill process: {e}")
 
 
