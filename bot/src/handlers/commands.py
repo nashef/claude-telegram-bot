@@ -210,12 +210,12 @@ async def ps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if db_proc:
             elapsed = (datetime.utcnow() - db_proc["started_at"]).total_seconds()
-            process_list += f"• `{proc_id[:8]}...`\n"
+            process_list += f"• `{proc_id}`\n"
             process_list += f"  User: {db_proc['user_id']}\n"
             process_list += f"  Time: {elapsed:.0f}s\n"
             process_list += f"  Cmd: {db_proc['command'][:50] if db_proc['command'] else 'N/A'}...\n\n"
         else:
-            process_list += f"• `{proc_id[:20]}...` (no details)\n"
+            process_list += f"• `{proc_id}` (no details)\n"
 
     await update.message.reply_text(process_list, parse_mode="Markdown")
 
