@@ -65,7 +65,6 @@ _alarm_worker_task = None
 _api_executor_task = None
 _application = None
 _shutdown_event = asyncio.Event()
-_shutting_down = False  # Flag to prevent re-entrant shutdown
 
 # Crash tracking for loop detection
 _crash_times = deque(maxlen=10)  # Keep last 10 crash timestamps
@@ -86,20 +85,26 @@ async def post_init(application: Application) -> None:
         # Start Claude worker task
         logger.info("Starting Claude worker task...")
         _worker_task = asyncio.create_task(claude_worker(_shutdown_event))
+        if hasattr(_worker_task, 'set_name'):
+            _worker_task.set_name("claude_worker")
 
     # Check if alarm worker is already running
     if _alarm_worker_task is not None and not _alarm_worker_task.done():
         logger.warning("Alarm worker already running, skipping...")
     else:
-        # Start alarm worker task
+        # Start alarm worker task with shutdown event
         logger.info("Starting alarm worker task...")
-        _alarm_worker_task = asyncio.create_task(alarm_worker())
+        _alarm_worker_task = asyncio.create_task(alarm_worker(_shutdown_event))
+        if hasattr(_alarm_worker_task, 'set_name'):
+            _alarm_worker_task.set_name("alarm_worker")
 
     # Start API server if not already running
     global _api_executor_task
     if _api_executor_task is None or _api_executor_task.done():
         logger.info(f"Starting Alarm API server on localhost:{settings.alarm_api_port}...")
-        # Run API server in a thread to avoid blocking
+        # Note: Uvicorn in thread mode doesn't shut down cleanly
+        # We'll just let it die when the process exits
+        # TODO: Consider using hypercorn or a pure async server for cleaner shutdown
         def run_api_server():
             try:
                 uvicorn.run(
@@ -165,12 +170,10 @@ async def cleanup():
         with suppress(asyncio.CancelledError):
             await _alarm_worker_task
 
-    # Cancel the API executor task
+    # API server runs in thread - we can't cleanly stop uvicorn
+    # It will terminate when the process exits
     if _api_executor_task and not _api_executor_task.done():
-        logger.info("Cancelling API server task...")
-        _api_executor_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await _api_executor_task
+        logger.info("API server running in thread will terminate with process")
 
     # Kill any active Claude processes
     if claude_executor and claude_executor.active_processes:
@@ -194,10 +197,26 @@ async def cleanup():
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
         logger.info(f"Cancelling {len(tasks)} remaining tasks...")
+        # Log task details for debugging
         for task in tasks:
+            task_name = task.get_name() if hasattr(task, 'get_name') else str(task)
+            logger.debug(f"  - Task: {task_name}")
             task.cancel()
-        # Wait for all tasks to complete cancellation
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Wait for all tasks to complete cancellation WITH TIMEOUT
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=5.0
+            )
+            logger.info("All tasks cancelled successfully")
+        except asyncio.TimeoutError:
+            logger.warning(f"Task cancellation timed out after 5 seconds, {len([t for t in tasks if not t.done()])} tasks still running")
+            # Force exit if tasks won't cancel
+            for task in tasks:
+                if not task.done():
+                    task_name = task.get_name() if hasattr(task, 'get_name') else str(task)
+                    logger.error(f"Task still running: {task_name}")
 
     # Close database
     logger.info("Closing database...")
@@ -272,17 +291,9 @@ async def async_main():
 
 def signal_handler(sig):
     """Handle shutdown signals."""
-    global _shutting_down
-
-    # Prevent re-entrant calls
-    if _shutting_down:
-        logger.info(f"Already shutting down, ignoring signal {signal.Signals(sig).name}")
-        return
-
-    _shutting_down = True
     logger.info(f"Received signal {signal.Signals(sig).name}")
     _shutdown_event.set()
-    # Don't call sys.exit() here - let the main loop handle shutdown gracefully
+    # Don't call sys.exit() - let the main loop handle shutdown gracefully
 
 
 async def send_crash_notification(error_msg: str):
@@ -362,13 +373,12 @@ def main():
 
 def resilient_main():
     """Main with retry logic and crash loop detection."""
-    global _shutdown_event, _shutting_down
+    global _shutdown_event
 
     while True:
         try:
-            # Reset shutdown flags for restart
+            # Reset shutdown event for restart
             _shutdown_event = asyncio.Event()
-            _shutting_down = False
 
             logger.info("Starting bot...")
             main()
