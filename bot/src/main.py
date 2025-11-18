@@ -275,7 +275,7 @@ async def send_crash_notification(error_msg: str):
     try:
         async with httpx.AsyncClient() as client:
             bot_token = settings.telegram_bot_token
-            message = f"⚠️ *WARN: Bot crashed*\n\nError: `{error_msg[:100]}`\n\nRestarting..."
+            message = f"⚠️ *WARN: Bot crashed*\n\nError: `{error_msg}`\n\nRestarting..."
 
             for user_id in settings.allowed_users:
                 try:

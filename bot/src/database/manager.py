@@ -51,7 +51,7 @@ class DatabaseManager:
             else:
                 config = Config(key=key, value=value)
                 session.add(config)
-            logger.info(f"Config set: {key} = {value[:50]}...")
+            logger.info(f"Config set: {key} = {value}")
 
     @staticmethod
     def delete_config(key: str) -> bool:
@@ -93,7 +93,7 @@ class DatabaseManager:
                     extra_data=metadata
                 )
                 session.add(user_session)
-            logger.info(f"Session set for user {user_id}: {session_id[:20]}...")
+            logger.info(f"Session set for user {user_id}: {session_id}")
 
     @staticmethod
     def clear_user_session(user_id: int) -> bool:
@@ -120,7 +120,7 @@ class DatabaseManager:
             process = session.query(ProcessTracker).filter_by(process_id=process_id).first()
             if process:
                 # Update existing process
-                process.command = command[:500] if command else None
+                process.command = command if command else None
                 process.status = "running"
                 process.started_at = datetime.utcnow()
                 process.ended_at = None
@@ -130,7 +130,7 @@ class DatabaseManager:
                 process = ProcessTracker(
                     process_id=process_id,
                     user_id=user_id,
-                    command=command[:500] if command else None,
+                    command=command if command else None,
                     status="running"
                 )
                 session.add(process)

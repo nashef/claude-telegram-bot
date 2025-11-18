@@ -214,7 +214,7 @@ class ClaudeProcessManager:
 
                 # Validate message structure
                 if not isinstance(msg, dict) or "type" not in msg:
-                    parsing_errors.append(f"Invalid message: {line[:100]}")
+                    parsing_errors.append(f"Invalid message: {line}")
                     continue
 
                 message_buffer.append(msg)
@@ -248,7 +248,7 @@ class ClaudeProcessManager:
 
             except json.JSONDecodeError as e:
                 parsing_errors.append(f"JSON decode error: {e}")
-                logger.warning(f"Failed to parse line: {line[:200]}")
+                logger.warning(f"Failed to parse line: {line}")
                 continue
 
         # Log parsing errors

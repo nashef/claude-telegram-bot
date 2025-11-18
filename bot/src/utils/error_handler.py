@@ -32,7 +32,7 @@ def categorize_error(error: Exception) -> tuple[ErrorCategory, str]:
         (category, user_friendly_message)
     """
     error_name = type(error).__name__
-    error_str = str(error)[:200]  # Truncate long error messages
+    error_str = str(error)  # Full error message for logs
 
     # Network and connectivity errors
     if isinstance(error, (NetworkError, ConnectionError, OSError)):
@@ -122,7 +122,7 @@ def error_handler(func: Callable) -> Callable:
                 extra={
                     'handler': func.__name__,
                     'user_id': update.effective_user.id if update.effective_user else None,
-                    'user_message': update.message.text[:100] if update.message and update.message.text else None,
+                    'user_message': update.message.text if update.message and update.message.text else None,
                 }
             )
 

@@ -244,7 +244,7 @@ async def claude_worker(shutdown_event=None):
                         for tool in update_obj.tool_calls:
                             logger.info(f"   - {tool.get('name')}: {tool.get('input')}")
                 elif update_obj.type == "assistant":
-                    logger.info(f"{source_emoji} Claude: {update_obj.content[:100]}...")
+                    logger.info(f"{source_emoji} Claude: {update_obj.content}")
                 elif update_obj.type == "tool_result":
                     logger.info(f"{source_emoji} {update_obj.content}")
                 elif update_obj.type == "result":
@@ -266,7 +266,7 @@ async def claude_worker(shutdown_event=None):
                     progress_text = f"{status_prefix}🔧 **{update_obj.content}**"
                 elif update_obj.type == "assistant":
                     content_preview = (
-                        update_obj.content[:150] + "..."
+                        update_obj.content
                         if len(update_obj.content) > 150
                         else update_obj.content
                     )
@@ -314,7 +314,7 @@ async def claude_worker(shutdown_event=None):
                 typing_task = None
 
             # Execute Claude with the request
-            logger.info(f"Claude worker: calling executor with prompt: {request.prompt[:100]}...")
+            logger.info(f"Claude worker: calling executor with prompt: {request.prompt}")
             response_obj = await claude_executor.execute_command(
                 prompt=request.prompt,
                 working_directory=claude_executor.config.approved_directory,
@@ -333,7 +333,7 @@ async def claude_worker(shutdown_event=None):
 
             # Track process in database
             if user_id and response_obj.session_id:
-                db_manager.track_process(response_obj.session_id, user_id, request.prompt[:500])
+                db_manager.track_process(response_obj.session_id, user_id, request.prompt)
 
             # Update session ID in both database and context
             if response_obj.session_id:
@@ -402,10 +402,10 @@ async def claude_worker(shutdown_event=None):
                         logger.info(f"🔔 Alarm {request.alarm_id} result sent to user {user_id}")
                     except Exception as e:
                         logger.error(f"Failed to send alarm result to user {user_id}: {e}")
-                        logger.info(f"🔔 Alarm {request.alarm_id} result (logged): {response_obj.content[:200]}...")
+                        logger.info(f"🔔 Alarm {request.alarm_id} result (logged): {response_obj.content}")
                 else:
                     # No user context, just log it
-                    logger.info(f"🔔 Alarm {request.alarm_id} result: {response_obj.content[:200]}...")
+                    logger.info(f"🔔 Alarm {request.alarm_id} result: {response_obj.content}")
 
             logger.info(f"Claude worker: completed {request.source} request")
 
@@ -499,7 +499,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
-    logger.info(f"Received user message: {message_text[:50]}...")
+    logger.info(f"Received user message: {message_text}")
 
     # Check if this is a thread marker
     is_start = _is_thread_start(message_text)
