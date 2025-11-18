@@ -350,19 +350,13 @@ Examples:
     # Create command
     create_parser = subparsers.add_parser("create", help="Create a new alarm")
     create_parser.add_argument("prompt", nargs="*", help="Prompt to send to Claude (concatenated with newlines)")
-    if DEFAULT_USER_ID:
-        create_parser.add_argument(
-            "--user-id",
-            type=int,
-            default=DEFAULT_USER_ID,
-            help=f"Telegram user ID (default: {DEFAULT_USER_ID})"
-        )
-    else:
-        create_parser.add_argument(
-            "user_id",
-            type=int,
-            help="Telegram user ID"
-        )
+    create_parser.add_argument(
+        "--user-id",
+        type=int,
+        default=DEFAULT_USER_ID,
+        required=(DEFAULT_USER_ID is None),
+        help=f"Telegram user ID (default: {DEFAULT_USER_ID})" if DEFAULT_USER_ID else "Telegram user ID (required)"
+    )
     create_parser.add_argument(
         "--file", "-f",
         help="Read prompt from file instead of arguments"
