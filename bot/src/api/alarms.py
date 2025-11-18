@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from src.config.settings import settings
 from src.database.manager import db_manager
-from src.handlers.alarm_handler import create_alarm as create_alarm_handler
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +76,11 @@ async def create_alarm(alarm: AlarmCreate) -> dict:
                 detail=f"User {alarm.user_id} is not authorized to create alarms"
             )
 
-        alarm_id = create_alarm_handler(
+        # Generate a unique alarm ID
+        alarm_id = f"api_{alarm.user_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+
+        db_manager.create_alarm(
+            alarm_id=alarm_id,
             user_id=alarm.user_id,
             prompt=alarm.prompt,
             one_shot_time=alarm.one_shot_time,
