@@ -79,6 +79,23 @@ class BotState(Base):
         return f"<BotState(key={self.key}, value={self.value})>"
 
 
+class Alarm(Base):
+    """Store alarms (one-shot and recurring)."""
+    __tablename__ = "alarms"
+
+    id = Column(String(36), primary_key=True, nullable=False)  # UUID
+    user_id = Column(Integer, nullable=False)
+    prompt = Column(Text, nullable=False)
+    one_shot_time = Column(DateTime, nullable=True)  # For one-shot alarms
+    cron_schedule = Column(String(255), nullable=True)  # For recurring alarms
+    status = Column(String(50), default="active")  # active, fired, disabled
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Alarm(id={self.id}, user_id={self.user_id}, status={self.status})>"
+
+
 # Database connection management
 _engine = None
 _SessionLocal = None

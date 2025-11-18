@@ -24,9 +24,11 @@ claude_executor = ClaudeProcessManager(settings)
 class ClaudeRequest:
     """Message to enqueue for Claude processing."""
     prompt: str
-    update: Update
-    context: ContextTypes.DEFAULT_TYPE
-    source: str  # "user_text", "photo", "audio", "document", "heartbeat"
+    update: Update | None
+    context: ContextTypes.DEFAULT_TYPE | None
+    source: str  # "user_text", "photo", "audio", "document", "heartbeat", "alarm"
+    user_id: int | None = None  # For alarm-triggered requests without Telegram Update
+    alarm_id: str | None = None  # Track which alarm triggered this request
 
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
@@ -196,7 +198,8 @@ async def claude_worker(shutdown_event=None):
                 "audio": "🎵",
                 "document": "📄",
                 "heartbeat": "💭",
-                "wake_up": "👁️"
+                "wake_up": "👁️",
+                "alarm": "🔔"
             }.get(request.source, "❓")
 
             # Status prefix for non-text messages
@@ -206,7 +209,8 @@ async def claude_worker(shutdown_event=None):
                 "audio": "🎵 Audio notification\n\n",
                 "document": "📄 File received\n\n",
                 "heartbeat": "💭 Internal monologue\n\n",
-                "wake_up": "👁️ Waking up\n\n"
+                "wake_up": "👁️ Waking up\n\n",
+                "alarm": "🔔 Alarm\n\n"
             }.get(request.source, "")
 
             # No "Processing..." message - will create message only if thinking output appears
@@ -234,6 +238,10 @@ async def claude_worker(shutdown_event=None):
                     logger.info(f"{source_emoji} {update_obj.content}")
                 elif update_obj.type == "result":
                     logger.info(f"{source_emoji} {update_obj.content}")
+
+                # Skip UI updates for alarm requests (no Telegram chat)
+                if request.source == "alarm":
+                    return
 
                 # Throttle UI updates to max 1 per second
                 if current_time - last_update_time < 1.0:
@@ -273,17 +281,26 @@ async def claude_worker(shutdown_event=None):
                         logger.debug(f"Failed to update progress: {e}")
 
             # Get current session ID from database (fallback to context)
-            user_id = request.update.effective_user.id if request.update.effective_user else None
+            # For alarm requests, update is None, so use user_id from request
+            user_id = None
+            if request.update and request.update.effective_user:
+                user_id = request.update.effective_user.id
+            elif request.user_id:
+                user_id = request.user_id
+
             session_id = None
             if user_id:
                 session_id = db_manager.get_user_session(user_id)
-            if not session_id:
+            if not session_id and request.context:
                 session_id = request.context.user_data.get('claude_session_id')
 
-            # Start typing indicator when Claude subprocess starts
-            typing_task = asyncio.create_task(
-                _send_typing_periodically(request.context, request.update)
-            )
+            # Start typing indicator when Claude subprocess starts (skip for alarm requests)
+            if request.context and request.update:
+                typing_task = asyncio.create_task(
+                    _send_typing_periodically(request.context, request.update)
+                )
+            else:
+                typing_task = None
 
             # Execute Claude with the request
             logger.info(f"Claude worker: calling executor with prompt: {request.prompt[:100]}...")
@@ -296,11 +313,12 @@ async def claude_worker(shutdown_event=None):
             )
 
             # Stop typing indicator when Claude subprocess ends
-            typing_task.cancel()
-            try:
-                await typing_task
-            except asyncio.CancelledError:
-                pass
+            if typing_task:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
 
             # Track process in database
             if user_id and response_obj.session_id:
@@ -308,56 +326,75 @@ async def claude_worker(shutdown_event=None):
 
             # Update session ID in both database and context
             if response_obj.session_id:
-                request.context.user_data['claude_session_id'] = response_obj.session_id
+                if request.context:
+                    request.context.user_data['claude_session_id'] = response_obj.session_id
                 if user_id:
                     db_manager.set_user_session(user_id, response_obj.session_id)
 
             # Update activity tracker
-            if 'activity_tracker' in request.context.user_data:
+            if request.context and 'activity_tracker' in request.context.user_data:
                 request.context.user_data['activity_tracker']['time'] = asyncio.get_event_loop().time()
 
-            # Send Claude's response with notification enabled
-            response = response_obj.content
-            if response:
-                if len(response) > 4096:
-                    # Response too long - delete thinking msg and send in chunks
-                    if thinking_msg:
-                        await thinking_msg.delete()
+            # Send Claude's response with notification enabled (send for alarm requests if context available)
+            if request.update and request.context:
+                response = response_obj.content
+                if response:
+                    if len(response) > 4096:
+                        # Response too long - delete thinking msg and send in chunks
+                        if thinking_msg:
+                            await thinking_msg.delete()
 
-                    chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
-                    for i, chunk in enumerate(chunks):
-                        # Only notify on first chunk
-                        await request.context.bot.send_message(
-                            chat_id=request.update.effective_chat.id,
-                            text=chunk,
-                            disable_notification=(i > 0)  # Only first chunk notifies
-                        )
-                else:
-                    # Response fits in one message
-                    if thinking_msg:
-                        # Edit existing thinking message
-                        # Note: Telegram doesn't support changing disable_notification on edits
-                        # So we delete and resend to get notification
-                        await thinking_msg.delete()
-                        await request.context.bot.send_message(
-                            chat_id=request.update.effective_chat.id,
-                            text=response,
-                            disable_notification=False  # Final result notifies
-                        )
+                        chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
+                        for i, chunk in enumerate(chunks):
+                            # Only notify on first chunk
+                            await request.context.bot.send_message(
+                                chat_id=request.update.effective_chat.id,
+                                text=chunk,
+                                disable_notification=(i > 0)  # Only first chunk notifies
+                            )
                     else:
-                        # No thinking message, send directly with notification
-                        await request.context.bot.send_message(
-                            chat_id=request.update.effective_chat.id,
-                            text=response,
-                            disable_notification=False
+                        # Response fits in one message
+                        if thinking_msg:
+                            # Edit existing thinking message
+                            # Note: Telegram doesn't support changing disable_notification on edits
+                            # So we delete and resend to get notification
+                            await thinking_msg.delete()
+                            await request.context.bot.send_message(
+                                chat_id=request.update.effective_chat.id,
+                                text=response,
+                                disable_notification=False  # Final result notifies
+                            )
+                        else:
+                            # No thinking message, send directly with notification
+                            await request.context.bot.send_message(
+                                chat_id=request.update.effective_chat.id,
+                                text=response,
+                                disable_notification=False
+                            )
+                else:
+                    # No response - send error message
+                    await request.context.bot.send_message(
+                        chat_id=request.update.effective_chat.id,
+                        text=f"{status_prefix}(no response)",
+                        disable_notification=False
+                    )
+            elif request.source == "alarm":
+                # For alarm requests without Telegram context, send direct message to user
+                if user_id and request.alarm_id:
+                    try:
+                        # Send result directly to the user via Telegram
+                        await _application.bot.send_message(
+                            chat_id=user_id,
+                            text=f"🔔 **Alarm Response**\n\n{response_obj.content}",
+                            parse_mode="Markdown"
                         )
-            else:
-                # No response - send error message
-                await request.context.bot.send_message(
-                    chat_id=request.update.effective_chat.id,
-                    text=f"{status_prefix}(no response)",
-                    disable_notification=False
-                )
+                        logger.info(f"🔔 Alarm {request.alarm_id} result sent to user {user_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to send alarm result to user {user_id}: {e}")
+                        logger.info(f"🔔 Alarm {request.alarm_id} result (logged): {response_obj.content[:200]}...")
+                else:
+                    # No user context, just log it
+                    logger.info(f"🔔 Alarm {request.alarm_id} result: {response_obj.content[:200]}...")
 
             logger.info(f"Claude worker: completed {request.source} request")
 
@@ -368,7 +405,7 @@ async def claude_worker(shutdown_event=None):
         except Exception as e:
             logger.error(f"Claude worker: error processing request: {e}", exc_info=True)
             # Stop typing on error
-            if 'typing_task' in locals():
+            if 'typing_task' in locals() and typing_task:
                 typing_task.cancel()
                 try:
                     await typing_task
@@ -379,22 +416,24 @@ async def claude_worker(shutdown_event=None):
             category, user_message = categorize_error(e)
             logger.info(f"Error category: {category}")
 
-            try:
-                await request.context.bot.send_message(
-                    chat_id=request.update.effective_chat.id,
-                    text=user_message,
-                    parse_mode="Markdown"
-                )
-            except Exception as send_error:
-                logger.error(f"Failed to send error message: {send_error}")
-                # Try simple message without markdown
+            # Skip sending error to Telegram for alarm requests
+            if request.source != "alarm" and request.update and request.context:
                 try:
                     await request.context.bot.send_message(
                         chat_id=request.update.effective_chat.id,
-                        text="❌ An error occurred. Please try again."
+                        text=user_message,
+                        parse_mode="Markdown"
                     )
-                except:
-                    pass
+                except Exception as send_error:
+                    logger.error(f"Failed to send error message: {send_error}")
+                    # Try simple message without markdown
+                    try:
+                        await request.context.bot.send_message(
+                            chat_id=request.update.effective_chat.id,
+                            text="❌ An error occurred. Please try again."
+                        )
+                    except:
+                        pass
         finally:
             # Only mark task as done if we actually dequeued an item
             if dequeued:

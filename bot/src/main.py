@@ -9,6 +9,7 @@ import time
 from collections import deque
 from contextlib import suppress
 import httpx
+import uvicorn
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from src.config.settings import settings
@@ -22,7 +23,9 @@ from src.handlers.commands import (
     kill_command, killall_command, debug_command,
     restart_command, errors_command, thread_command, send_command
 )
+from src.handlers.alarm_handler import alarm_worker
 from src.database.models import init_database, close_database
+from src.api.alarms import app as alarm_api
 
 # Configure logging
 def setup_logging():
@@ -58,6 +61,8 @@ logger = logging.getLogger(__name__)
 
 # Global references for cleanup
 _worker_task = None
+_alarm_worker_task = None
+_api_executor_task = None
 _application = None
 _shutdown_event = asyncio.Event()
 
@@ -67,17 +72,44 @@ _crash_times = deque(maxlen=10)  # Keep last 10 crash timestamps
 
 async def post_init(application: Application) -> None:
     """Initialize the bot after the application starts."""
-    global _worker_task, _application
+    global _worker_task, _alarm_worker_task, _api_server, _application
     _application = application
 
     # Check if worker is already running
     if _worker_task is not None and not _worker_task.done():
         logger.warning("Claude worker already running, skipping...")
-        return
+    else:
+        # Start Claude worker task
+        logger.info("Starting Claude worker task...")
+        _worker_task = asyncio.create_task(claude_worker(_shutdown_event))
 
-    # Start Claude worker task
-    logger.info("Starting Claude worker task...")
-    _worker_task = asyncio.create_task(claude_worker(_shutdown_event))
+    # Check if alarm worker is already running
+    if _alarm_worker_task is not None and not _alarm_worker_task.done():
+        logger.warning("Alarm worker already running, skipping...")
+    else:
+        # Start alarm worker task
+        logger.info("Starting alarm worker task...")
+        _alarm_worker_task = asyncio.create_task(alarm_worker())
+
+    # Start API server if not already running
+    global _api_executor_task
+    if _api_executor_task is None or _api_executor_task.done():
+        logger.info(f"Starting Alarm API server on localhost:{settings.alarm_api_port}...")
+        # Run API server in a thread to avoid blocking
+        def run_api_server():
+            try:
+                uvicorn.run(
+                    alarm_api,
+                    host="127.0.0.1",
+                    port=settings.alarm_api_port,
+                    log_level="info" if settings.debug else "warning"
+                )
+            except Exception as e:
+                logger.error(f"Error running API server: {e}")
+
+        # Run in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        _api_executor_task = loop.run_in_executor(None, run_api_server)
 
 
 async def cleanup():
@@ -99,15 +131,35 @@ async def cleanup():
             logger.debug(f"Updater already stopped: {e}")
 
         # Then stop and shutdown application
-        await _application.stop()
-        await _application.shutdown()
+        try:
+            await _application.stop()
+        except RuntimeError:
+            logger.debug("Application already stopped")
+        try:
+            await _application.shutdown()
+        except RuntimeError:
+            logger.debug("Application already shutdown")
 
-    # Cancel the worker task
+    # Cancel the Claude worker task
     if _worker_task and not _worker_task.done():
         logger.info("Cancelling Claude worker task...")
         _worker_task.cancel()
         with suppress(asyncio.CancelledError):
             await _worker_task
+
+    # Cancel the alarm worker task
+    if _alarm_worker_task and not _alarm_worker_task.done():
+        logger.info("Cancelling alarm worker task...")
+        _alarm_worker_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _alarm_worker_task
+
+    # Cancel the API executor task
+    if _api_executor_task and not _api_executor_task.done():
+        logger.info("Cancelling API server task...")
+        _api_executor_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _api_executor_task
 
     # Kill any active Claude processes
     if claude_executor and claude_executor.active_processes:
@@ -211,6 +263,8 @@ def signal_handler(sig):
     """Handle shutdown signals."""
     logger.info(f"Received signal {signal.Signals(sig).name}")
     _shutdown_event.set()
+    # Exit the process immediately - cleanup should be fast from the shutdown event
+    sys.exit(0)
 
 
 async def send_crash_notification(error_msg: str):

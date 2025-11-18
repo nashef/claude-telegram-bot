@@ -8,7 +8,7 @@ from contextlib import contextmanager
 
 from .models import (
     get_session, Config, UserSession, ProcessTracker,
-    ErrorLog, BotState
+    ErrorLog, BotState, Alarm
 )
 
 logger = logging.getLogger(__name__)
@@ -257,6 +257,123 @@ class DatabaseManager:
             count = session.query(ErrorLog).filter(ErrorLog.timestamp < cutoff).delete()
             logger.info(f"Cleared {count} old error logs")
             return count
+
+    # Alarm operations
+    @staticmethod
+    def create_alarm(
+        alarm_id: str,
+        user_id: int,
+        prompt: str,
+        one_shot_time: Optional[datetime] = None,
+        cron_schedule: Optional[str] = None
+    ) -> None:
+        """Create a new alarm."""
+        with db_session() as session:
+            alarm = Alarm(
+                id=alarm_id,
+                user_id=user_id,
+                prompt=prompt,
+                one_shot_time=one_shot_time,
+                cron_schedule=cron_schedule,
+                status="active"
+            )
+            session.add(alarm)
+            logger.info(f"Alarm created: {alarm_id} for user {user_id}")
+
+    @staticmethod
+    def get_alarm(alarm_id: str) -> Optional[dict]:
+        """Get an alarm by ID."""
+        with db_session() as session:
+            alarm = session.query(Alarm).filter_by(id=alarm_id).first()
+            if alarm:
+                return {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+            return None
+
+    @staticmethod
+    def get_user_alarms(user_id: int, status: Optional[str] = None) -> List[dict]:
+        """Get user's alarms."""
+        with db_session() as session:
+            query = session.query(Alarm).filter_by(user_id=user_id)
+            if status:
+                query = query.filter_by(status=status)
+            alarms = query.all()
+            return [
+                {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+                for alarm in alarms
+            ]
+
+    @staticmethod
+    def get_active_alarms() -> List[dict]:
+        """Get all active alarms."""
+        with db_session() as session:
+            alarms = session.query(Alarm).filter_by(status="active").all()
+            return [
+                {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+                for alarm in alarms
+            ]
+
+    @staticmethod
+    def update_alarm(
+        alarm_id: str,
+        prompt: Optional[str] = None,
+        status: Optional[str] = None,
+        one_shot_time: Optional[datetime] = None,
+        cron_schedule: Optional[str] = None
+    ) -> bool:
+        """Update an alarm."""
+        with db_session() as session:
+            alarm = session.query(Alarm).filter_by(id=alarm_id).first()
+            if alarm:
+                if prompt is not None:
+                    alarm.prompt = prompt
+                if status is not None:
+                    alarm.status = status
+                if one_shot_time is not None:
+                    alarm.one_shot_time = one_shot_time
+                if cron_schedule is not None:
+                    alarm.cron_schedule = cron_schedule
+                alarm.updated_at = datetime.utcnow()
+                logger.info(f"Alarm updated: {alarm_id}")
+                return True
+            return False
+
+    @staticmethod
+    def delete_alarm(alarm_id: str) -> bool:
+        """Delete an alarm."""
+        with db_session() as session:
+            alarm = session.query(Alarm).filter_by(id=alarm_id).first()
+            if alarm:
+                session.delete(alarm)
+                logger.info(f"Alarm deleted: {alarm_id}")
+                return True
+            return False
 
 
 # Singleton instance
