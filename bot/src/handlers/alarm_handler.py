@@ -101,6 +101,8 @@ async def _fire_alarm(alarm: dict) -> None:
     try:
         # Use the last request's context if available (like heartbeats do)
         # This allows us to send results back to the user via Telegram
+        # Note: _last_request is only updated with user/heartbeat requests, not alarm requests,
+        # so this preserves the actual Telegram context even after multiple alarms fire
         update = None
         context = None
         has_context = False
@@ -110,11 +112,11 @@ async def _fire_alarm(alarm: dict) -> None:
             context = _last_request.context
             if update and context:
                 has_context = True
-                logger.info(f"Alarm {alarm['id']} has user context, will send to Telegram")
+                logger.info(f"✅ Alarm {alarm['id']} using Telegram context from {_last_request.source} request")
             else:
-                logger.warning(f"Alarm {alarm['id']} found last_request but missing update/context")
+                logger.warning(f"⚠️ Alarm {alarm['id']}: last_request exists but has no update/context")
         else:
-            logger.warning(f"Alarm {alarm['id']} has no last_request context, result will be logged only")
+            logger.warning(f"⚠️ Alarm {alarm['id']}: no user activity yet, will use direct message sending")
 
         # Create a request with the alarm prompt
         request = ClaudeRequest(

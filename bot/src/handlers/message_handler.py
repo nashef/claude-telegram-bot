@@ -186,8 +186,10 @@ async def claude_worker(shutdown_event=None):
                     # No last request yet or heartbeat disabled, just continue waiting
                     continue
 
-            # Store this request for future heartbeats
-            _last_request = request
+            # Store this request for future heartbeats (only if it has Telegram context)
+            # Alarm requests don't have Telegram context, so don't overwrite _last_request with them
+            if request.update and request.context:
+                _last_request = request
 
             logger.info(f"Claude worker: processing {request.source} request")
 
