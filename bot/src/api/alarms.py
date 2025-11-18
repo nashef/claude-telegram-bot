@@ -70,6 +70,13 @@ async def create_alarm(alarm: AlarmCreate) -> dict:
     must be provided, but not both.
     """
     try:
+        # Validate that user_id is in ALLOWED_USERS
+        if alarm.user_id not in settings.allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=f"User {alarm.user_id} is not authorized to create alarms"
+            )
+
         alarm_id = create_alarm_handler(
             user_id=alarm.user_id,
             prompt=alarm.prompt,
