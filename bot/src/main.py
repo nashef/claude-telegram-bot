@@ -65,6 +65,7 @@ _alarm_worker_task = None
 _api_executor_task = None
 _application = None
 _shutdown_event = asyncio.Event()
+_shutting_down = False  # Flag to prevent re-entrant shutdown
 
 # Crash tracking for loop detection
 _crash_times = deque(maxlen=10)  # Keep last 10 crash timestamps
@@ -125,21 +126,28 @@ async def cleanup():
     # Stop accepting new updates
     if _application:
         logger.info("Stopping Telegram bot...")
-        # Stop polling first (if still running)
+        # Stop polling first (if still running) with timeout
         try:
             if hasattr(_application.updater, 'running') and _application.updater.running:
-                await _application.updater.stop()
+                await asyncio.wait_for(_application.updater.stop(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Updater stop timed out")
         except RuntimeError as e:
             # Already stopped, that's fine
             logger.debug(f"Updater already stopped: {e}")
 
-        # Then stop and shutdown application
+        # Then stop and shutdown application with timeouts
         try:
-            await _application.stop()
+            await asyncio.wait_for(_application.stop(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("Application stop timed out")
         except RuntimeError:
             logger.debug("Application already stopped")
+
         try:
-            await _application.shutdown()
+            await asyncio.wait_for(_application.shutdown(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("Application shutdown timed out")
         except RuntimeError:
             logger.debug("Application already shutdown")
 
@@ -264,10 +272,17 @@ async def async_main():
 
 def signal_handler(sig):
     """Handle shutdown signals."""
+    global _shutting_down
+
+    # Prevent re-entrant calls
+    if _shutting_down:
+        logger.info(f"Already shutting down, ignoring signal {signal.Signals(sig).name}")
+        return
+
+    _shutting_down = True
     logger.info(f"Received signal {signal.Signals(sig).name}")
     _shutdown_event.set()
-    # Exit the process immediately - cleanup should be fast from the shutdown event
-    sys.exit(0)
+    # Don't call sys.exit() here - let the main loop handle shutdown gracefully
 
 
 async def send_crash_notification(error_msg: str):
@@ -327,23 +342,33 @@ def main():
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt")
     finally:
-        # Run cleanup
+        # Run cleanup with timeout
         logger.info("Running cleanup...")
-        loop.run_until_complete(cleanup())
+        try:
+            # Give cleanup 10 seconds max
+            loop.run_until_complete(asyncio.wait_for(cleanup(), timeout=10.0))
+        except asyncio.TimeoutError:
+            logger.warning("Cleanup timed out after 10 seconds, forcing exit")
+        except Exception as e:
+            logger.error(f"Cleanup failed: {e}")
 
         # Close the loop
-        loop.close()
-        logger.info("Event loop closed successfully")
+        try:
+            loop.close()
+            logger.info("Event loop closed successfully")
+        except Exception as e:
+            logger.error(f"Failed to close event loop: {e}")
 
 
 def resilient_main():
     """Main with retry logic and crash loop detection."""
-    global _shutdown_event
+    global _shutdown_event, _shutting_down
 
     while True:
         try:
-            # Reset shutdown event for restart
+            # Reset shutdown flags for restart
             _shutdown_event = asyncio.Event()
+            _shutting_down = False
 
             logger.info("Starting bot...")
             main()
