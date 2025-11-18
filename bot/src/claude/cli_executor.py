@@ -147,7 +147,9 @@ class ClaudeProcessManager:
         """Build Claude CLI command (richardatct approach)."""
         cmd = ["claude"]  # CLI binary
 
-        cmd.extend(["--continue"])
+        if continue_session:
+            cmd.extend(["--continue"])
+
         if continue_session and not prompt:
             # Continue existing session without new prompt
             if session_id:

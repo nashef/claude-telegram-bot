@@ -92,6 +92,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /killall - Kill all active processes
 /debug - Toggle debug mode
 /restart - Restart the bot (sessions preserved)
+/restart --session <prompt> - Restart with new session
 /errors - Show recent errors
 
 **Threading Tips:**
@@ -343,22 +344,68 @@ async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @error_handler
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /restart command - graceful restart (admin only)."""
+    """Handle /restart command - graceful restart with optional new session.
+
+    Usage:
+    - /restart - Normal restart, preserves sessions
+    - /restart --session <prompt> - Restart with new session and send prompt
+    """
     user_id = update.effective_user.id
 
     if not is_admin(user_id):
         await update.message.reply_text("⛔ Admin access required.")
         return
 
-    await update.message.reply_text("🔄 Restarting bot... Sessions will be preserved.")
+    # Parse command arguments
+    message_text = update.message.text
+    args = message_text.split(maxsplit=1)
+
+    # Check for --session flag
+    if len(args) > 1 and args[1].startswith("--session"):
+        # Extract prompt after --session
+        session_args = args[1].split(maxsplit=1)
+        prompt = session_args[1] if len(session_args) > 1 else None
+
+        if not prompt:
+            await update.message.reply_text(
+                "❌ Please provide a prompt after --session\n"
+                "Example: `/restart --session You wake up refreshed`",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Clear the user's session before restart
+        db_manager.clear_user_session(user_id)
+        context.user_data.pop('claude_session_id', None)
+
+        await update.message.reply_text(
+            "🔄 Restarting bot with new session...\n"
+            f"📝 Prompt: `{prompt[:50]}{'...' if len(prompt) > 50 else ''}`",
+            parse_mode="Markdown"
+        )
+
+        # Queue the prompt to be sent after restart
+        from src.handlers.message_handler import ClaudeRequest
+        await claude_queue.put(ClaudeRequest(
+            prompt=prompt,
+            update=update,
+            context=context,
+            source="user_text"
+        ))
+
+        # Brief delay to let the queue process
+        await asyncio.sleep(1)
+    else:
+        await update.message.reply_text("🔄 Restarting bot... Sessions will be preserved.")
 
     # Notify all admins
+    restart_type = "with new session" if "--session" in message_text else "normal"
     for admin_id in settings.allowed_users:
         if admin_id != user_id:
             try:
                 await context.bot.send_message(
                     chat_id=admin_id,
-                    text=f"🔄 Bot restart initiated by user {user_id}"
+                    text=f"🔄 Bot restart ({restart_type}) initiated by user {user_id}"
                 )
             except:
                 pass
