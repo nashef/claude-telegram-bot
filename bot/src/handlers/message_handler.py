@@ -289,6 +289,14 @@ async def claude_worker(shutdown_event=None):
                             # Update existing message (also silent)
                             await thinking_msg.edit_text(progress_text, parse_mode="Markdown")
                     except Exception as e:
+                        # If markdown parsing fails, try without markdown
+                        if "can't parse" in str(e).lower() or "bad request" in str(e).lower():
+                            try:
+                                # Remove markdown formatting and retry
+                                plain_text = progress_text.replace("**", "").replace("_", "").replace("`", "")
+                                await thinking_msg.edit_text(plain_text, parse_mode=None)
+                            except:
+                                pass
                         logger.debug(f"Failed to update progress: {e}")
 
             # Get current session ID from database (fallback to context)
@@ -442,6 +450,14 @@ async def claude_worker(shutdown_event=None):
                 except asyncio.CancelledError:
                     pass
 
+            # Delete thinking message if it exists (to avoid confusion)
+            if 'thinking_msg' in locals() and thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                    thinking_msg = None  # Clear reference
+                except Exception as del_error:
+                    logger.debug(f"Could not delete thinking message: {del_error}")
+
             # Categorize error and send appropriate message
             category, user_message = categorize_error(e)
             logger.info(f"Error category: {category}")
@@ -455,15 +471,27 @@ async def claude_worker(shutdown_event=None):
                         parse_mode="Markdown"
                     )
                 except Exception as send_error:
-                    logger.error(f"Failed to send error message: {send_error}")
-                    # Try simple message without markdown
+                    logger.error(f"Failed to send error message with markdown: {send_error}")
+                    # Try without markdown parsing
                     try:
+                        # Send the original error message without markdown
+                        plain_message = user_message.replace("*", "").replace("`", "").replace("_", "")
                         await request.context.bot.send_message(
                             chat_id=request.update.effective_chat.id,
-                            text="❌ An error occurred. Please try again."
+                            text=plain_message,
+                            parse_mode=None
                         )
-                    except:
-                        pass
+                    except Exception as second_error:
+                        logger.error(f"Failed to send plain error message: {second_error}")
+                        # Last resort - send minimal error message
+                        try:
+                            await request.context.bot.send_message(
+                                chat_id=request.update.effective_chat.id,
+                                text="An error occurred. Please try again.",
+                                parse_mode=None
+                            )
+                        except:
+                            pass
         finally:
             # Only mark task as done if we actually dequeued an item
             if dequeued:
