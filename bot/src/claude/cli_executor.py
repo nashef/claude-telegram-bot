@@ -235,7 +235,12 @@ class ClaudeProcessManager:
                     for block in content_blocks:
                         if isinstance(block, dict):
                             if block.get("type") == "text":
-                                all_content.append(block.get("text", ""))
+                                text_content = block.get("text", "")
+                                # Check if this is an API error message
+                                if text_content.startswith("API Error:"):
+                                    error_messages.append(text_content)
+                                else:
+                                    all_content.append(text_content)
                             elif block.get("type") == "tool_use":
                                 all_tools.append({
                                     "name": block.get("name"),
