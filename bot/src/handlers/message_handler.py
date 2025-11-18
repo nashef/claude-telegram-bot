@@ -36,6 +36,9 @@ claude_queue: Queue[ClaudeRequest] = Queue()
 # Store last context for heartbeat messages
 _last_request: ClaudeRequest | None = None
 
+# Store application reference for sending messages from alarm context
+_application = None
+
 # Message threading state per user (Twitter-style)
 @dataclass
 class ThreadState:
@@ -54,6 +57,12 @@ THREAD_START_MARKERS = ["1/", "🧵"]
 THREAD_END_MARKERS = ["x/", "X/", "🏁", "✅", "✔️"]
 
 # Note: No confirmation system - Claude executes actions directly (like richardatct)
+
+
+def set_application(application):
+    """Set the application reference for sending alarm messages."""
+    global _application
+    _application = application
 
 
 def _is_thread_start(text: str) -> bool:

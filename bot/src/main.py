@@ -15,7 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from src.config.settings import settings
 from src.handlers.message_handler import (
     start_command, handle_message, handle_photo, handle_audio,
-    handle_document, claude_worker, claude_executor
+    handle_document, claude_worker, claude_executor, set_application
 )
 from src.handlers.commands import (
     status_command, help_command, clear_command,
@@ -74,6 +74,9 @@ async def post_init(application: Application) -> None:
     """Initialize the bot after the application starts."""
     global _worker_task, _alarm_worker_task, _api_server, _application
     _application = application
+
+    # Share application reference with message handler for alarm messaging
+    set_application(application)
 
     # Check if worker is already running
     if _worker_task is not None and not _worker_task.done():
