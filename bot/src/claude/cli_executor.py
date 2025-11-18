@@ -8,8 +8,10 @@ import logging
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +176,12 @@ class ClaudeProcessManager:
         # Allowed tools
         if hasattr(self.config, 'claude_allowed_tools') and self.config.claude_allowed_tools:
             cmd.extend(["--allowedTools", ",".join(self.config.claude_allowed_tools)])
+
+        # Add current Mountain Time to system prompt
+        mountain_tz = pytz.timezone('America/Denver')
+        current_time = datetime.now(mountain_tz)
+        time_str = current_time.strftime('%B %d, %Y %I:%M %p %Z')
+        cmd.extend(["--append-system-prompt", f"The local time for leaf is {time_str}"])
 
         logger.debug(f"Built command: {' '.join(cmd)}")
         return cmd
