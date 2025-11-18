@@ -274,9 +274,9 @@ async def async_main():
     # Call post_init manually since we're not using run_polling
     await post_init(application)
 
-    # Start polling
-    logger.info("Bot started successfully. Polling for messages...")
-    await application.updater.start_polling(allowed_updates=None)
+    # Start polling with drop_pending_updates to ignore old messages
+    logger.info("Bot started successfully. Dropping old updates and starting polling...")
+    await application.updater.start_polling(allowed_updates=None, drop_pending_updates=True)
 
     # Wait for shutdown signal
     await _shutdown_event.wait()

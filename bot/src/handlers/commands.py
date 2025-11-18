@@ -444,9 +444,12 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
 
-    # Exit gracefully - the resilient_main will restart it
-    import sys
-    sys.exit(0)
+    # Trigger graceful shutdown - the resilient_main will restart it
+    # Import the shutdown event from main module
+    from src.main import _shutdown_event
+    _shutdown_event.set()
+
+    # The bot will shutdown gracefully and restart via resilient_main
 
 
 @error_handler
