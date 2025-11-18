@@ -207,6 +207,7 @@ class ClaudeProcessManager:
         # Collect all content and tools
         all_content = []
         all_tools = []
+        error_messages = []  # Track error messages from stream
 
         async for line in self._read_stream_bounded(process.stdout):
             try:
@@ -242,6 +243,15 @@ class ClaudeProcessManager:
                                     "id": block.get("id"),
                                 })
 
+                # Check for errors in the message
+                if msg.get("type") == "error" or (msg.get("error") and isinstance(msg.get("error"), dict)):
+                    # Capture error message
+                    error_obj = msg.get("error", msg)
+                    if isinstance(error_obj, dict):
+                        error_messages.append(error_obj.get("message", str(error_obj)))
+                    else:
+                        error_messages.append(str(msg))
+
                 # Check for final result
                 if msg.get("type") == "result":
                     result_data = msg
@@ -260,7 +270,14 @@ class ClaudeProcessManager:
 
         if return_code != 0:
             stderr = await process.stderr.read()
-            error_msg = stderr.decode("utf-8", errors="replace")
+            stderr_msg = stderr.decode("utf-8", errors="replace")
+
+            # Use error messages from stream if available, otherwise use stderr
+            if error_messages:
+                error_msg = " | ".join(error_messages)
+            else:
+                error_msg = stderr_msg if stderr_msg.strip() else "Unknown error"
+
             logger.error(f"Claude CLI failed with code {return_code}: {error_msg}")
 
             return ClaudeResponse(
