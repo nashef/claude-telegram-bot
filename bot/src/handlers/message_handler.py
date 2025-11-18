@@ -333,9 +333,31 @@ async def claude_worker(shutdown_event=None):
                     continue_session=bool(session_id),
                     stream_callback=stream_callback
                 )
+
+                # Check if the response indicates an error
+                if hasattr(response_obj, 'is_error') and response_obj.is_error:
+                    error_str = response_obj.content
+                    # Check if this is the JPEG/PNG mismatch error
+                    if "image/jpeg" in error_str and "does not match" in error_str:
+                        logger.warning(f"Claude CLI image format mismatch (likely PNG labeled as JPEG). Retrying with new session...")
+                        # Retry without session to avoid the problematic history
+                        response_obj = await claude_executor.execute_command(
+                            prompt=request.prompt,
+                            working_directory=claude_executor.config.approved_directory,
+                            session_id=None,  # Start fresh session
+                            continue_session=False,
+                            stream_callback=stream_callback
+                        )
+                        # If still an error after retry, raise it
+                        if hasattr(response_obj, 'is_error') and response_obj.is_error:
+                            raise RuntimeError(f"Claude CLI error: {response_obj.content}")
+                    else:
+                        # Raise other errors
+                        raise RuntimeError(f"Claude CLI error: {response_obj.content}")
+
             except Exception as e:
                 error_str = str(e)
-                # Check if this is the JPEG/PNG mismatch error from Claude CLI
+                # Check if this is the JPEG/PNG mismatch error from exception
                 if "image/jpeg" in error_str and "does not match" in error_str:
                     logger.warning(f"Claude CLI image format mismatch (likely PNG labeled as JPEG). Retrying with new session...")
                     # Retry without session to avoid the problematic history
@@ -346,6 +368,9 @@ async def claude_worker(shutdown_event=None):
                         continue_session=False,
                         stream_callback=stream_callback
                     )
+                    # If still an error after retry, raise it
+                    if hasattr(response_obj, 'is_error') and response_obj.is_error:
+                        raise RuntimeError(f"Claude CLI error after retry: {response_obj.content}")
                 else:
                     # Re-raise other errors
                     raise
