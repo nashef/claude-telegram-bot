@@ -315,13 +315,32 @@ async def claude_worker(shutdown_event=None):
 
             # Execute Claude with the request
             logger.info(f"Claude worker: calling executor with prompt: {request.prompt}")
-            response_obj = await claude_executor.execute_command(
-                prompt=request.prompt,
-                working_directory=claude_executor.config.approved_directory,
-                session_id=session_id,
-                continue_session=bool(session_id),
-                stream_callback=stream_callback
-            )
+
+            # Handle potential image format mismatch error
+            try:
+                response_obj = await claude_executor.execute_command(
+                    prompt=request.prompt,
+                    working_directory=claude_executor.config.approved_directory,
+                    session_id=session_id,
+                    continue_session=bool(session_id),
+                    stream_callback=stream_callback
+                )
+            except Exception as e:
+                error_str = str(e)
+                # Check if this is the JPEG/PNG mismatch error from Claude CLI
+                if "image/jpeg" in error_str and "does not match" in error_str:
+                    logger.warning(f"Claude CLI image format mismatch (likely PNG labeled as JPEG). Retrying with new session...")
+                    # Retry without session to avoid the problematic history
+                    response_obj = await claude_executor.execute_command(
+                        prompt=request.prompt,
+                        working_directory=claude_executor.config.approved_directory,
+                        session_id=None,  # Start fresh session
+                        continue_session=False,
+                        stream_callback=stream_callback
+                    )
+                else:
+                    # Re-raise other errors
+                    raise
 
             # Stop typing indicator when Claude subprocess ends
             if typing_task:

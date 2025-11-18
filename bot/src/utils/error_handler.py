@@ -87,6 +87,9 @@ def categorize_error(error: Exception) -> tuple[ErrorCategory, str]:
         elif "rate" in error_str.lower() or "limit" in error_str.lower():
             return (ErrorCategory.RATE_LIMIT,
                    "⏸️ Claude API limit reached. Please wait a moment.")
+        elif "image/jpeg" in error_str and "does not match" in error_str:
+            return (ErrorCategory.CLAUDE_ERROR,
+                   "🖼️ Image format issue detected. Starting fresh conversation...")
         else:
             return (ErrorCategory.CLAUDE_ERROR,
                    "🤖 Claude encountered an error. Please try again.")
