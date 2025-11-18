@@ -88,7 +88,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /pause - Pause message processing
 /resume - Resume message processing
 /ps - List active processes
-/kill - Kill a specific process
+/kill - Kill all processes (or specific with ID)
 /killall - Kill all active processes
 /debug - Toggle debug mode
 /restart - Restart the bot (sessions preserved)
@@ -223,7 +223,12 @@ async def ps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @error_handler
 async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /kill command - kill specific process (admin only)."""
+    """Handle /kill command - kill all or specific process (admin only).
+
+    Usage:
+    - /kill - Kill all active processes
+    - /kill <process_id> - Kill specific process
+    """
     user_id = update.effective_user.id
 
     if not is_admin(user_id):
@@ -232,13 +237,42 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Parse process ID from command
     parts = update.message.text.split()
+
+    # If no process ID provided, kill all processes
     if len(parts) < 2:
-        await update.message.reply_text("Usage: /kill <process_id>")
+        if not claude_executor or not claude_executor.active_processes:
+            await update.message.reply_text("📋 No active processes to kill.")
+            return
+
+        # Kill all processes
+        killed_count = 0
+        failed_count = 0
+        for proc_id, process in list(claude_executor.active_processes.items()):
+            try:
+                process.terminate()
+                await asyncio.sleep(0.5)  # Brief pause
+                if process.returncode is None:
+                    process.kill()
+                del claude_executor.active_processes[proc_id]
+                db_manager.update_process_status(proc_id, "killed")
+                killed_count += 1
+                logger.info(f"Killed process {proc_id}")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to kill process {proc_id}: {e}")
+
+        if killed_count > 0:
+            await update.message.reply_text(
+                f"💀 Killed {killed_count} process{'es' if killed_count > 1 else ''}"
+                + (f"\n⚠️ Failed to kill {failed_count}" if failed_count > 0 else "")
+            )
+        else:
+            await update.message.reply_text("❌ Failed to kill any processes")
         return
 
     process_id = parts[1]
 
-    # Find and kill process
+    # Find and kill specific process
     if not claude_executor or process_id not in claude_executor.active_processes:
         # Check if it's a partial ID
         matching = [pid for pid in claude_executor.active_processes.keys() if pid.startswith(process_id)]
