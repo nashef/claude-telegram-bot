@@ -120,14 +120,34 @@ def print_alarm(alarm: dict):
 
 def create_alarm(
     user_id: int,
-    prompt: str,
+    prompt: list,
     one_shot_time: Optional[str] = None,
     one_shot_in: Optional[str] = None,
     cron_schedule: Optional[str] = None,
+    file: Optional[str] = None,
     api_url: str = DEFAULT_API_URL
 ) -> None:
     """Create a new alarm."""
     try:
+        # Determine prompt source: file or arguments
+        if file:
+            try:
+                with open(file, 'r') as f:
+                    final_prompt = f.read()
+                print(f"📖 Reading prompt from file: {file}")
+            except FileNotFoundError:
+                print(f"❌ Error: File not found: {file}")
+                sys.exit(1)
+            except Exception as e:
+                print(f"❌ Error reading file: {e}")
+                sys.exit(1)
+        elif prompt:
+            # Concatenate prompt arguments with newlines
+            final_prompt = "\n".join(prompt)
+        else:
+            print("❌ Error: Either provide prompt arguments or use --file")
+            sys.exit(1)
+
         # Handle one_shot_in (convert delta to absolute time)
         if one_shot_in:
             if one_shot_time:
@@ -143,7 +163,7 @@ def create_alarm(
 
         payload = {
             "user_id": user_id,
-            "prompt": prompt
+            "prompt": final_prompt
         }
 
         if one_shot_time:
@@ -329,7 +349,7 @@ Examples:
 
     # Create command
     create_parser = subparsers.add_parser("create", help="Create a new alarm")
-    create_parser.add_argument("prompt", help="Prompt to send to Claude")
+    create_parser.add_argument("prompt", nargs="*", help="Prompt to send to Claude (concatenated with newlines)")
     if DEFAULT_USER_ID:
         create_parser.add_argument(
             "--user-id",
@@ -343,6 +363,10 @@ Examples:
             type=int,
             help="Telegram user ID"
         )
+    create_parser.add_argument(
+        "--file", "-f",
+        help="Read prompt from file instead of arguments"
+    )
     create_parser.add_argument(
         "--one-shot-time",
         help="ISO datetime for one-shot alarm (e.g., 2024-12-31T23:59:00)"
@@ -399,6 +423,7 @@ Examples:
             one_shot_time=args.one_shot_time,
             one_shot_in=args.one_shot_in,
             cron_schedule=args.cron,
+            file=args.file,
             api_url=args.api_url
         )
     elif args.command == "get":
