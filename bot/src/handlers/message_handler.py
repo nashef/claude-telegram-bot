@@ -396,7 +396,7 @@ async def claude_worker(shutdown_event=None):
                         # Send result directly to the user via Telegram
                         await _application.bot.send_message(
                             chat_id=user_id,
-                            text=f"🔔 **Alarm Response**\n\n{response_obj.content}",
+                            text=response_obj.content,
                             parse_mode="Markdown"
                         )
                         logger.info(f"🔔 Alarm {request.alarm_id} result sent to user {user_id}")
