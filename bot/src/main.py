@@ -21,7 +21,8 @@ from src.handlers.commands import (
     status_command, help_command, clear_command,
     pause_command, resume_command, ps_command,
     kill_command, killall_command, debug_command,
-    restart_command, errors_command, thread_command, send_command
+    restart_command, errors_command, thread_command, send_command,
+    alarm_command
 )
 from src.handlers.alarm_handler import alarm_worker
 from src.database.models import init_database, close_database
@@ -258,6 +259,7 @@ async def async_main():
     application.add_handler(CommandHandler("errors", errors_command))
     application.add_handler(CommandHandler("thread", thread_command))
     application.add_handler(CommandHandler("send", send_command))
+    application.add_handler(CommandHandler("alarm", alarm_command))
 
     # Add message handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))

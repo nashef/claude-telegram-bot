@@ -79,6 +79,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /status - Show bot status
 /help - Show this help message
 /clear - Clear your session
+/alarm - Show upcoming alarms
 
 **Threading:**
 /thread - Start a thread (or use `1/` or 🧵)
@@ -556,3 +557,96 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Thread submitted by command for user {user_id}")
     await _submit_thread(user_id)
+
+
+@error_handler
+async def alarm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /alarm command - show upcoming alarms."""
+    user_id = update.effective_user.id
+
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Import croniter for calculating next alarm times
+    from croniter import croniter
+
+    # Get user's active alarms
+    user_alarms = db_manager.get_user_alarms(user_id, status="active")
+
+    if not user_alarms:
+        await update.message.reply_text("📭 No active alarms configured.")
+        return
+
+    # Calculate next fire time for each alarm
+    now = datetime.utcnow()
+    upcoming_alarms = []
+
+    for alarm in user_alarms:
+        next_fire_time = None
+        alarm_type = ""
+
+        # Calculate next fire time based on alarm type
+        if alarm["one_shot_time"]:
+            if alarm["one_shot_time"] > now:
+                next_fire_time = alarm["one_shot_time"]
+                alarm_type = "⏰ One-shot"
+        elif alarm["cron_schedule"]:
+            try:
+                cron = croniter(alarm["cron_schedule"], now)
+                next_fire_time = cron.get_next(datetime)
+                alarm_type = "🔄 Recurring"
+            except Exception as e:
+                logger.error(f"Invalid cron schedule for alarm {alarm['id']}: {e}")
+                continue
+
+        if next_fire_time:
+            upcoming_alarms.append({
+                "id": alarm["id"],
+                "prompt": alarm["prompt"],
+                "next_fire": next_fire_time,
+                "type": alarm_type,
+                "cron": alarm.get("cron_schedule", "")
+            })
+
+    if not upcoming_alarms:
+        await update.message.reply_text("📭 No upcoming alarms scheduled.")
+        return
+
+    # Sort by next fire time
+    upcoming_alarms.sort(key=lambda x: x["next_fire"])
+
+    # Format the message
+    total_count = len(upcoming_alarms)
+    display_count = min(5, total_count)
+
+    message = f"⏰ **Upcoming Alarms** ({display_count} of {total_count}):\n\n"
+
+    for alarm in upcoming_alarms[:5]:
+        # Calculate time until alarm
+        time_delta = alarm["next_fire"] - now
+        days = time_delta.days
+        hours, remainder = divmod(time_delta.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+
+        # Format time until
+        if days > 0:
+            time_until = f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            time_until = f"{hours}h {minutes}m"
+        else:
+            time_until = f"{minutes}m"
+
+        # Format alarm info
+        prompt_preview = alarm["prompt"][:50] + "..." if len(alarm["prompt"]) > 50 else alarm["prompt"]
+        message += f"{alarm['type']} in **{time_until}**\n"
+        message += f"  `{alarm['id'][:8]}...`\n"
+        message += f"  _{prompt_preview}_\n"
+        if alarm["cron"]:
+            message += f"  Schedule: `{alarm['cron']}`\n"
+        message += "\n"
+
+    if total_count > 5:
+        message += f"_... and {total_count - 5} more alarms_"
+
+    await update.message.reply_text(message, parse_mode="Markdown")
