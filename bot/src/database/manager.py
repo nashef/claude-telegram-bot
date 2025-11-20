@@ -268,6 +268,14 @@ class DatabaseManager:
         cron_schedule: Optional[str] = None
     ) -> None:
         """Create a new alarm."""
+        # Validate that at least one timing mechanism is provided
+        if not one_shot_time and not cron_schedule:
+            raise ValueError("Alarm must have either one_shot_time or cron_schedule")
+
+        # Validate that both aren't provided (they're mutually exclusive)
+        if one_shot_time and cron_schedule:
+            raise ValueError("Alarm cannot have both one_shot_time and cron_schedule")
+
         with db_session() as session:
             alarm = Alarm(
                 id=alarm_id,

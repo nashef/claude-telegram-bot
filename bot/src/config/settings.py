@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     alarm_api_port: int = Field(8000, env="ALARM_API_PORT")
     alarm_max_timeout: int = Field(60, env="ALARM_MAX_TIMEOUT")
 
+    # Timezone for natural language time parsing
+    user_timezone: str = Field("UTC", env="USER_TIMEZONE")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

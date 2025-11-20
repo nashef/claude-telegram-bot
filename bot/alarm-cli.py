@@ -15,6 +15,18 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
+# Try to import enhanced time parsing (optional)
+try:
+    # Add bot src to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from src.utils.time_parser import parse_time_flexible, format_datetime_local
+    from src.config.settings import settings
+    NATURAL_LANGUAGE_AVAILABLE = True
+    USER_TIMEZONE = settings.user_timezone
+except ImportError:
+    NATURAL_LANGUAGE_AVAILABLE = False
+    USER_TIMEZONE = "UTC"
+
 
 # Default API base URL
 DEFAULT_API_URL = "http://localhost:8000"
@@ -123,6 +135,7 @@ def create_alarm(
     prompt: list,
     one_shot_time: Optional[str] = None,
     one_shot_in: Optional[str] = None,
+    time: Optional[str] = None,
     cron_schedule: Optional[str] = None,
     file: Optional[str] = None,
     api_url: str = DEFAULT_API_URL
@@ -148,15 +161,46 @@ def create_alarm(
             print("❌ Error: Either provide prompt arguments or use --file")
             sys.exit(1)
 
+        # Handle time parameters (check for conflicts first)
+        time_params = sum(1 for p in [one_shot_time, one_shot_in, time] if p)
+        if time_params > 1:
+            print("❌ Error: Can only specify one of --time, --one-shot-time, or --one-shot-in")
+            sys.exit(1)
+
+        # Handle natural language time (--time)
+        if time:
+            if not NATURAL_LANGUAGE_AVAILABLE:
+                print("⚠️  Warning: Natural language parsing not available, trying basic parsing...")
+                # Fallback to simple delta if it matches that format
+                if re.match(r'^\d+[mhd]$', time.strip()):
+                    one_shot_in = time
+                else:
+                    print("❌ Error: Natural language parsing requires dateparser. Use --one-shot-in or --one-shot-time instead.")
+                    sys.exit(1)
+            else:
+                try:
+                    future_time = parse_time_flexible(time, USER_TIMEZONE)
+                    one_shot_time = future_time.isoformat()
+
+                    # Format for display in user's timezone
+                    local_display = format_datetime_local(future_time, USER_TIMEZONE)
+                    print(f"⏰ Alarm will fire at {local_display}")
+                    print(f"   (UTC: {future_time.isoformat()})")
+                except ValueError as e:
+                    print(f"❌ Error parsing time '{time}': {e}")
+                    sys.exit(1)
+
         # Handle one_shot_in (convert delta to absolute time)
         if one_shot_in:
-            if one_shot_time:
-                print("❌ Error: Cannot specify both --one-shot-time and --one-shot-in")
-                sys.exit(1)
             try:
                 future_time = parse_time_delta(one_shot_in)
                 one_shot_time = future_time.isoformat()
-                print(f"⏰ Alarm will fire in {one_shot_in} at {future_time.isoformat()} UTC")
+
+                if NATURAL_LANGUAGE_AVAILABLE:
+                    local_display = format_datetime_local(future_time, USER_TIMEZONE)
+                    print(f"⏰ Alarm will fire in {one_shot_in} at {local_display}")
+                else:
+                    print(f"⏰ Alarm will fire in {one_shot_in} at {future_time.isoformat()} UTC")
             except ValueError as e:
                 print(f"❌ Error parsing time delta: {e}")
                 sys.exit(1)
@@ -233,7 +277,7 @@ def list_alarms(user_id: Optional[int] = None, status: Optional[str] = None, api
 
         print(f"📋 Found {len(alarms)} alarm(s):")
         for i, alarm in enumerate(alarms, 1):
-            print(f"\n{i}. Alarm {alarm['id'][:8]}...")
+            print(f"\n{i}. Alarm")
             print_alarm(alarm)
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -291,6 +335,51 @@ def delete_alarm(alarm_id: str, api_url: str = DEFAULT_API_URL) -> None:
         sys.exit(1)
 
 
+def clear_fired_alarms(user_id: int, api_url: str = DEFAULT_API_URL) -> None:
+    """Clear all fired and completed alarms."""
+    try:
+        # First, get all alarms for the user
+        params = {"user_id": user_id}
+        query_string = urllib.parse.urlencode(params)
+        url = f"{api_url}/alarms?{query_string}"
+
+        status_code, response = http_request("GET", url)
+
+        if status_code != 200:
+            error_msg = response.get("detail", response.get("raw", str(response)))
+            print(f"❌ Error listing alarms: {error_msg}")
+            sys.exit(1)
+
+        alarms = response
+        fired_alarms = [a for a in alarms if a.get("status") in ["fired", "completed"]]
+
+        if not fired_alarms:
+            print("📋 No fired/completed alarms to clear")
+            return
+
+        print(f"🗑️  Found {len(fired_alarms)} fired/completed alarm(s) to delete")
+
+        # Delete each fired alarm
+        deleted_count = 0
+        for alarm in fired_alarms:
+            alarm_id = alarm.get("id")
+            try:
+                status_code, _ = http_request("DELETE", f"{api_url}/alarms/{alarm_id}")
+                if status_code == 204:
+                    deleted_count += 1
+                    print(f"  ✓ Deleted: {alarm_id}")
+                else:
+                    print(f"  ✗ Failed to delete: {alarm_id}")
+            except Exception as e:
+                print(f"  ✗ Error deleting {alarm_id}: {e}")
+
+        print(f"\n✅ Successfully deleted {deleted_count} alarm(s)")
+
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        sys.exit(1)
+
+
 def health_check(api_url: str = DEFAULT_API_URL) -> None:
     """Check API health."""
     try:
@@ -313,6 +402,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Create alarms with natural language (NEW!)
+  alarm-cli create "Take medicine" --time "tomorrow at 2pm"
+  alarm-cli create "Meeting reminder" --time "in 3 hours"
+  alarm-cli create "Weekly review" --time "next Monday at 9am"
+
   # Create a one-shot alarm (fires in 5 minutes)
   alarm-cli create "Hello!" --one-shot-in 5m
 
@@ -333,6 +427,9 @@ Examples:
 
   # Delete an alarm
   alarm-cli delete abc123def456
+
+  # Clear all fired/completed alarms
+  alarm-cli clear
 
   # Check API health
   alarm-cli health
@@ -360,6 +457,10 @@ Examples:
     create_parser.add_argument(
         "--file", "-f",
         help="Read prompt from file instead of arguments"
+    )
+    create_parser.add_argument(
+        "--time", "-t",
+        help="Natural language time (e.g., 'tomorrow at 2pm', 'in 3 hours', 'next Monday')"
     )
     create_parser.add_argument(
         "--one-shot-time",
@@ -401,6 +502,16 @@ Examples:
     delete_parser = subparsers.add_parser("delete", help="Delete an alarm")
     delete_parser.add_argument("alarm_id", help="Alarm ID")
 
+    # Clear command
+    clear_parser = subparsers.add_parser("clear", help="Clear all fired/completed alarms")
+    clear_parser.add_argument(
+        "--user-id",
+        type=int,
+        default=DEFAULT_USER_ID,
+        required=(DEFAULT_USER_ID is None),
+        help=f"Telegram user ID (default: {DEFAULT_USER_ID})" if DEFAULT_USER_ID else "Telegram user ID (required)"
+    )
+
     # Health check command
     health_parser = subparsers.add_parser("health", help="Check API health")
 
@@ -416,6 +527,7 @@ Examples:
             args.prompt,
             one_shot_time=args.one_shot_time,
             one_shot_in=args.one_shot_in,
+            time=args.time,
             cron_schedule=args.cron,
             file=args.file,
             api_url=args.api_url
@@ -433,6 +545,8 @@ Examples:
         )
     elif args.command == "delete":
         delete_alarm(args.alarm_id, api_url=args.api_url)
+    elif args.command == "clear":
+        clear_fired_alarms(args.user_id, api_url=args.api_url)
     elif args.command == "health":
         health_check(api_url=args.api_url)
 

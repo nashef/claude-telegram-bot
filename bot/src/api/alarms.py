@@ -69,6 +69,18 @@ async def create_alarm(alarm: AlarmCreate) -> dict:
     must be provided, but not both.
     """
     try:
+        # Validate timing mechanism
+        if not alarm.one_shot_time and not alarm.cron_schedule:
+            raise HTTPException(
+                status_code=400,
+                detail="Alarm must have either one_shot_time or cron_schedule"
+            )
+
+        if alarm.one_shot_time and alarm.cron_schedule:
+            raise HTTPException(
+                status_code=400,
+                detail="Alarm cannot have both one_shot_time and cron_schedule"
+            )
         # Validate that user_id is in ALLOWED_USERS
         if alarm.user_id not in settings.allowed_users:
             raise HTTPException(

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Wrapper script for alarm-cli.py that ensures it runs in poetry environment
+# This enables natural language time parsing with dateparser
+
+# Get the directory of this script
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Run alarm-cli.py with poetry to ensure dependencies are available
+cd "$DIR" && poetry run python alarm-cli.py "$@"
