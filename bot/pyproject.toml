@@ -6,10 +6,11 @@ authors = ["Claude Telegram GCP Contributors"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/stebou/claude-code-telegram-gcp"
+packages = [ { include = "bot" } ]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-telegram-bot = "^20.8"
+python-telegram-bot = "^22.5"
 python-dotenv = "^1.0.0"
 pydantic = "^2.0.0"
 pydantic-settings = "^2.0.0"
