@@ -265,7 +265,8 @@ class DatabaseManager:
         user_id: int,
         prompt: str,
         one_shot_time: Optional[datetime] = None,
-        cron_schedule: Optional[str] = None
+        cron_schedule: Optional[str] = None,
+        alarm_name: Optional[str] = None
     ) -> None:
         """Create a new alarm."""
         # Validate that at least one timing mechanism is provided
@@ -280,13 +281,14 @@ class DatabaseManager:
             alarm = Alarm(
                 id=alarm_id,
                 user_id=user_id,
+                alarm_name=alarm_name,
                 prompt=prompt,
                 one_shot_time=one_shot_time,
                 cron_schedule=cron_schedule,
                 status="active"
             )
             session.add(alarm)
-            logger.info(f"Alarm created: {alarm_id} for user {user_id}")
+            logger.info(f"Alarm created: {alarm_id} ({alarm_name}) for user {user_id}")
 
     @staticmethod
     def get_alarm(alarm_id: str) -> Optional[dict]:
@@ -297,6 +299,7 @@ class DatabaseManager:
                 return {
                     "id": alarm.id,
                     "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
                     "prompt": alarm.prompt,
                     "one_shot_time": alarm.one_shot_time,
                     "cron_schedule": alarm.cron_schedule,
@@ -318,6 +321,7 @@ class DatabaseManager:
                 {
                     "id": alarm.id,
                     "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
                     "prompt": alarm.prompt,
                     "one_shot_time": alarm.one_shot_time,
                     "cron_schedule": alarm.cron_schedule,
@@ -337,6 +341,7 @@ class DatabaseManager:
                 {
                     "id": alarm.id,
                     "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
                     "prompt": alarm.prompt,
                     "one_shot_time": alarm.one_shot_time,
                     "cron_schedule": alarm.cron_schedule,
@@ -353,7 +358,8 @@ class DatabaseManager:
         prompt: Optional[str] = None,
         status: Optional[str] = None,
         one_shot_time: Optional[datetime] = None,
-        cron_schedule: Optional[str] = None
+        cron_schedule: Optional[str] = None,
+        alarm_name: Optional[str] = None
     ) -> bool:
         """Update an alarm."""
         with db_session() as session:
@@ -367,8 +373,10 @@ class DatabaseManager:
                     alarm.one_shot_time = one_shot_time
                 if cron_schedule is not None:
                     alarm.cron_schedule = cron_schedule
+                if alarm_name is not None:
+                    alarm.alarm_name = alarm_name
                 alarm.updated_at = datetime.utcnow()
-                logger.info(f"Alarm updated: {alarm_id}")
+                logger.info(f"Alarm updated: {alarm_id} ({alarm_name})")
                 return True
             return False
 
@@ -382,6 +390,74 @@ class DatabaseManager:
                 logger.info(f"Alarm deleted: {alarm_id}")
                 return True
             return False
+
+    @staticmethod
+    def get_alarm_by_name(user_id: int, alarm_name: str) -> Optional[dict]:
+        """Get a specific alarm by name for a user."""
+        with db_session() as session:
+            alarm = session.query(Alarm).filter_by(user_id=user_id, alarm_name=alarm_name).first()
+            if alarm:
+                return {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+            return None
+
+    @staticmethod
+    def get_user_alarms_by_name(user_id: int, alarm_name: str) -> List[dict]:
+        """Get all alarms for a user that match a name pattern (case-insensitive partial match)."""
+        with db_session() as session:
+            alarms = session.query(Alarm).filter(
+                Alarm.user_id == user_id,
+                Alarm.alarm_name.ilike(f"%{alarm_name}%")
+            ).all()
+            return [
+                {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+                for alarm in alarms
+            ]
+
+    @staticmethod
+    def get_user_named_alarms(user_id: int, status: Optional[str] = None) -> List[dict]:
+        """Get all named alarms for a user (filters out alarms without names)."""
+        with db_session() as session:
+            query = session.query(Alarm).filter(
+                Alarm.user_id == user_id,
+                Alarm.alarm_name.isnot(None)
+            )
+            if status:
+                query = query.filter_by(status=status)
+            alarms = query.all()
+            return [
+                {
+                    "id": alarm.id,
+                    "user_id": alarm.user_id,
+                    "alarm_name": alarm.alarm_name,
+                    "prompt": alarm.prompt,
+                    "one_shot_time": alarm.one_shot_time,
+                    "cron_schedule": alarm.cron_schedule,
+                    "status": alarm.status,
+                    "created_at": alarm.created_at,
+                    "updated_at": alarm.updated_at,
+                }
+                for alarm in alarms
+            ]
 
 
 # Singleton instance

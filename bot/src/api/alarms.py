@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from jinja2 import Template
 
 from src.config.settings import settings
 from src.database.manager import db_manager
@@ -28,11 +29,13 @@ class AlarmCreate(BaseModel):
     prompt: str
     one_shot_time: Optional[datetime] = None
     cron_schedule: Optional[str] = None
+    alarm_name: Optional[str] = None
 
     class Config:
         json_schema_extra = {
             "example": {
                 "user_id": 123456789,
+                "alarm_name": "daily_log_check",
                 "prompt": "Remind me to check the logs",
                 "one_shot_time": "2024-12-31T23:59:00"
             }
@@ -41,6 +44,7 @@ class AlarmCreate(BaseModel):
 
 class AlarmUpdate(BaseModel):
     """Request model for updating an alarm."""
+    alarm_name: Optional[str] = None
     prompt: Optional[str] = None
     status: Optional[str] = None
     one_shot_time: Optional[datetime] = None
@@ -51,12 +55,33 @@ class AlarmResponse(BaseModel):
     """Response model for an alarm."""
     id: str
     user_id: int
+    alarm_name: Optional[str] = None
     prompt: str
     one_shot_time: Optional[datetime] = None
     cron_schedule: Optional[str] = None
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class VoiceMessage(BaseModel):
+    """Request model for voice assistant messages."""
+    message: str
+    user_id: Optional[int] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "What time is it?",
+                "user_id": 123456789
+            }
+        }
+
+
+class VoiceMessageResponse(BaseModel):
+    """Response model for voice message submission."""
+    status: str
+    message: str
 
 
 # Routes
@@ -96,7 +121,8 @@ async def create_alarm(alarm: AlarmCreate) -> dict:
             user_id=alarm.user_id,
             prompt=alarm.prompt,
             one_shot_time=alarm.one_shot_time,
-            cron_schedule=alarm.cron_schedule
+            cron_schedule=alarm.cron_schedule,
+            alarm_name=alarm.alarm_name
         )
 
         # Return the created alarm
@@ -142,6 +168,86 @@ async def list_alarms(user_id: Optional[int] = None, status: Optional[str] = Non
     return alarms
 
 
+@app.get("/alarms/by-name/{alarm_name}", response_model=AlarmResponse)
+async def get_alarm_by_name(alarm_name: str, user_id: int) -> dict:
+    """
+    Get a specific alarm by exact name for a user.
+
+    Requires user_id query parameter to identify which user's alarm to retrieve.
+    """
+    try:
+        # Validate user is authorized
+        if user_id not in settings.allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=f"User {user_id} is not authorized"
+            )
+
+        alarm = db_manager.get_alarm_by_name(user_id, alarm_name)
+        if alarm is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Alarm '{alarm_name}' not found for user {user_id}"
+            )
+        return alarm
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving alarm by name: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alarms/search/{alarm_name}", response_model=list[AlarmResponse])
+async def search_alarms_by_name(alarm_name: str, user_id: int) -> list:
+    """
+    Search for alarms by name pattern (case-insensitive partial match).
+
+    Requires user_id query parameter to identify which user's alarms to search.
+    """
+    try:
+        # Validate user is authorized
+        if user_id not in settings.allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=f"User {user_id} is not authorized"
+            )
+
+        alarms = db_manager.get_user_alarms_by_name(user_id, alarm_name)
+        return alarms
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error searching alarms by name: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alarms/named-only/{user_id}", response_model=list[AlarmResponse])
+async def list_named_alarms(user_id: int, status: Optional[str] = None) -> list:
+    """
+    List all named alarms for a user (filters out alarms without names).
+
+    Optionally filter by status (active, fired, disabled).
+    """
+    try:
+        # Validate user is authorized
+        if user_id not in settings.allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=f"User {user_id} is not authorized"
+            )
+
+        alarms = db_manager.get_user_named_alarms(user_id, status=status)
+        return alarms
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing named alarms: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.put("/alarms/{alarm_id}", response_model=AlarmResponse)
 async def update_alarm(alarm_id: str, alarm_update: AlarmUpdate) -> dict:
     """Update an alarm."""
@@ -153,6 +259,7 @@ async def update_alarm(alarm_id: str, alarm_update: AlarmUpdate) -> dict:
     try:
         success = db_manager.update_alarm(
             alarm_id,
+            alarm_name=alarm_update.alarm_name,
             prompt=alarm_update.prompt,
             status=alarm_update.status,
             one_shot_time=alarm_update.one_shot_time,
@@ -188,6 +295,57 @@ async def delete_alarm(alarm_id: str) -> None:
         db_manager.delete_alarm(alarm_id)
     except Exception as e:
         logger.error(f"Error deleting alarm {alarm_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/voice", response_model=VoiceMessageResponse, status_code=200)
+async def receive_voice_message(voice_msg: VoiceMessage) -> dict:
+    """
+    Receive a voice assistant message from an external source.
+
+    The message is queued for Claude processing and returns immediately.
+    Response handling is asynchronous and out-of-band.
+    """
+    try:
+        # Import here to avoid circular dependency
+        from src.handlers.message_handler import claude_queue, ClaudeRequest
+
+        # Determine which user to route to
+        user_id = voice_msg.user_id if voice_msg.user_id is not None else settings.allowed_users[0]
+
+        # Validate user is authorized
+        if user_id not in settings.allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=f"User {user_id} is not authorized"
+            )
+
+        # Render the prompt template with the message
+        template = Template(settings.voice_assist_prompt)
+        rendered_prompt = template.render(message=voice_msg.message)
+
+        # Create request and enqueue
+        request = ClaudeRequest(
+            prompt=rendered_prompt,
+            update=None,
+            context=None,
+            source="voice_assistant",
+            user_id=user_id,
+            alarm_id=None,
+            original_message=voice_msg.message  # Store original message for Telegram notification
+        )
+
+        await claude_queue.put(request)
+
+        return {
+            "status": "queued",
+            "message": "Voice message received and queued for processing"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing voice message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

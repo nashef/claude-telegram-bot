@@ -5,6 +5,7 @@ Executes the claude CLI command and parses stream-json output.
 import asyncio
 import json
 import logging
+import os
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
@@ -195,6 +196,7 @@ class ClaudeProcessManager:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
+            env=os.environ.copy(),
             limit=1024 * 1024 * 512,  # 512MB memory limit
         )
 
@@ -238,7 +240,8 @@ class ClaudeProcessManager:
                         if isinstance(block, dict):
                             if block.get("type") == "text":
                                 text_content = block.get("text", "")
-                                # Check if this is an API error message
+                                # Only treat text starting with "API Error:" as an error
+                                # Actual API errors are already caught by type="error" check below
                                 if text_content.startswith("API Error:"):
                                     error_messages.append(text_content)
                                 else:

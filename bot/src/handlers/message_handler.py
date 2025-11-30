@@ -29,6 +29,7 @@ class ClaudeRequest:
     source: str  # "user_text", "photo", "audio", "document", "heartbeat", "alarm"
     user_id: int | None = None  # For alarm-triggered requests without Telegram Update
     alarm_id: str | None = None  # Track which alarm triggered this request
+    original_message: str | None = None  # Original message before template processing (for display)
 
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
@@ -154,6 +155,22 @@ async def _send_typing_periodically(context: ContextTypes.DEFAULT_TYPE, update: 
         logger.debug(f"Typing indicator error: {e}")
 
 
+async def _send_typing_to_user(user_id: int):
+    """Send typing indicator every 4 seconds to a user (for voice assistant)."""
+    try:
+        while True:
+            await _application.bot.send_chat_action(
+                chat_id=user_id,
+                action=ChatAction.TYPING
+            )
+            await asyncio.sleep(4)  # Typing lasts 5s, renew every 4s
+    except asyncio.CancelledError:
+        # Task was cancelled, stop gracefully
+        pass
+    except Exception as e:
+        logger.debug(f"Typing indicator error for user {user_id}: {e}")
+
+
 async def claude_worker(shutdown_event=None):
     """Single worker that processes all Claude requests sequentially from the queue."""
     global _last_request
@@ -210,7 +227,8 @@ async def claude_worker(shutdown_event=None):
                 "document": "📄",
                 "heartbeat": "💭",
                 "wake_up": "👁️",
-                "alarm": "🔔"
+                "alarm": "🔔",
+                "voice_assistant": "🎤"
             }.get(request.source, "❓")
 
             # Status prefix for non-text messages
@@ -250,8 +268,8 @@ async def claude_worker(shutdown_event=None):
                 elif update_obj.type == "result":
                     logger.info(f"{source_emoji} {update_obj.content}")
 
-                # Skip UI updates for alarm requests (no Telegram chat)
-                if request.source == "alarm":
+                # Skip UI updates for alarm and voice assistant requests (no Telegram chat)
+                if request.source in ("alarm", "voice_assistant"):
                     return
 
                 # Throttle UI updates to max 1 per second
@@ -317,6 +335,11 @@ async def claude_worker(shutdown_event=None):
             if request.context and request.update:
                 typing_task = asyncio.create_task(
                     _send_typing_periodically(request.context, request.update)
+                )
+            elif request.source == "voice_assistant" and user_id:
+                # For voice assistant, send typing indicator to the user directly
+                typing_task = asyncio.create_task(
+                    _send_typing_to_user(user_id)
                 )
             else:
                 typing_task = None
@@ -458,6 +481,37 @@ async def claude_worker(shutdown_event=None):
                 else:
                     # No user context, just log it
                     logger.info(f"🔔 Alarm {request.alarm_id} result: {response_obj.content}")
+            elif request.source == "voice_assistant":
+                # For voice assistant requests, send response to user via Telegram
+                if user_id:
+                    try:
+                        response = response_obj.content
+                        if response:
+                            # Prepend the original input message and response label
+                            original_msg = request.original_message or request.prompt
+                            full_message = f"🎤 Audio: {original_msg}\n\n{response}"
+
+                            if len(full_message) > 4096:
+                                # Response too long - send in chunks
+                                chunks = [full_message[i:i+4096] for i in range(0, len(full_message), 4096)]
+                                for i, chunk in enumerate(chunks):
+                                    await _application.bot.send_message(
+                                        chat_id=user_id,
+                                        text=chunk
+                                    )
+                            else:
+                                # Response fits in one message
+                                await _application.bot.send_message(
+                                    chat_id=user_id,
+                                    text=full_message
+                                )
+                            logger.info(f"🎤 Voice message response sent to user {user_id}")
+                        else:
+                            logger.warning(f"🎤 Voice message returned empty response for user {user_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to send voice response to user {user_id}: {e}")
+                else:
+                    logger.error(f"🎤 Voice message has no user_id to send response to")
 
             logger.info(f"Claude worker: completed {request.source} request")
 

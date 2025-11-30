@@ -568,8 +568,9 @@ async def alarm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Unauthorized access.")
         return
 
-    # Import croniter for calculating next alarm times
+    # Import croniter and pytz for calculating next alarm times
     from croniter import croniter
+    import pytz
 
     # Get user's active alarms
     user_alarms = db_manager.get_user_alarms(user_id, status="active")
@@ -578,8 +579,9 @@ async def alarm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 No active alarms configured.")
         return
 
-    # Calculate next fire time for each alarm
-    now = datetime.utcnow()
+    # Calculate next fire time for each alarm (use user's timezone)
+    tz = pytz.timezone(settings.user_timezone)
+    now = datetime.now(tz)
     upcoming_alarms = []
 
     for alarm in user_alarms:
@@ -588,8 +590,13 @@ async def alarm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Calculate next fire time based on alarm type
         if alarm["one_shot_time"]:
-            if alarm["one_shot_time"] > now:
-                next_fire_time = alarm["one_shot_time"]
+            # Make one_shot_time timezone-aware if it isn't
+            one_shot = alarm["one_shot_time"]
+            if one_shot.tzinfo is None:
+                one_shot = tz.localize(one_shot)
+
+            if one_shot > now:
+                next_fire_time = one_shot
                 alarm_type = "⏰ One-shot"
         elif alarm["cron_schedule"]:
             try:

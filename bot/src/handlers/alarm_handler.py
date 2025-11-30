@@ -6,12 +6,19 @@ import logging
 from datetime import datetime
 from croniter import croniter
 from typing import Optional
+import pytz
 
 from src.config.settings import settings
 from src.database.manager import db_manager
 from src.handlers.message_handler import claude_queue, ClaudeRequest, _last_request
 
 logger = logging.getLogger(__name__)
+
+
+def get_user_now():
+    """Get current time in user's timezone."""
+    tz = pytz.timezone(settings.user_timezone)
+    return datetime.now(tz)
 
 
 async def alarm_worker(shutdown_event=None):
@@ -45,18 +52,24 @@ async def alarm_worker(shutdown_event=None):
                 # Find the next alarm to fire
                 next_fire_time = None
                 next_alarm = None
-                now = datetime.utcnow()
+                now = get_user_now()
 
                 for alarm in alarms:
                     alarm_time = None
 
                     # Check one-shot alarm
                     if alarm["one_shot_time"]:
-                        if alarm["one_shot_time"] <= now:
+                        # Make one_shot_time timezone-aware if it isn't
+                        one_shot = alarm["one_shot_time"]
+                        if one_shot.tzinfo is None:
+                            tz = pytz.timezone(settings.user_timezone)
+                            one_shot = tz.localize(one_shot)
+
+                        if one_shot <= now:
                             # This alarm is due right now
                             alarm_time = now
                         else:
-                            alarm_time = alarm["one_shot_time"]
+                            alarm_time = one_shot
 
                     # Check recurring alarm (cron)
                     elif alarm["cron_schedule"]:
@@ -85,7 +98,7 @@ async def alarm_worker(shutdown_event=None):
                     continue
 
                 # Calculate timeout until next alarm
-                now = datetime.utcnow()
+                now = get_user_now()
                 time_until_alarm = (next_fire_time - now).total_seconds()
 
                 if time_until_alarm <= 0:

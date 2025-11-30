@@ -102,7 +102,7 @@ async def post_init(application: Application) -> None:
     # Start API server if not already running
     global _api_executor_task
     if _api_executor_task is None or _api_executor_task.done():
-        logger.info(f"Starting Alarm API server on localhost:{settings.alarm_api_port}...")
+        logger.info(f"Starting Alarm API server on 0.0.0.0:{settings.alarm_api_port}...")
         # Note: Uvicorn in thread mode doesn't shut down cleanly
         # We'll just let it die when the process exits
         # TODO: Consider using hypercorn or a pure async server for cleaner shutdown
@@ -110,7 +110,7 @@ async def post_init(application: Application) -> None:
             try:
                 uvicorn.run(
                     alarm_api,
-                    host="127.0.0.1",
+                    host="0.0.0.0",
                     port=settings.alarm_api_port,
                     log_level="info" if settings.debug else "warning"
                 )

@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     alarm_api_port: int = Field(8000, env="ALARM_API_PORT")
     alarm_max_timeout: int = Field(60, env="ALARM_MAX_TIMEOUT")
 
+    # Voice Assistant
+    voice_assist_prompt: str = Field("{{ message }}", env="VOICE_ASSIST_PROMPT")
+
     # Timezone for natural language time parsing
     user_timezone: str = Field("UTC", env="USER_TIMEZONE")
 

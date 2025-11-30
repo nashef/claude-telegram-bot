@@ -85,6 +85,7 @@ class Alarm(Base):
 
     id = Column(String(36), primary_key=True, nullable=False)  # UUID
     user_id = Column(Integer, nullable=False)
+    alarm_name = Column(String(255), nullable=True)  # Optional human-readable name
     prompt = Column(Text, nullable=False)
     one_shot_time = Column(DateTime, nullable=True)  # For one-shot alarms
     cron_schedule = Column(String(255), nullable=True)  # For recurring alarms
@@ -93,12 +94,55 @@ class Alarm(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self):
-        return f"<Alarm(id={self.id}, user_id={self.user_id}, status={self.status})>"
+        return f"<Alarm(id={self.id}, alarm_name={self.alarm_name}, user_id={self.user_id}, status={self.status})>"
 
 
 # Database connection management
 _engine = None
 _SessionLocal = None
+
+
+def _migrate_schema() -> None:
+    """Apply schema migrations to existing databases."""
+    from sqlalchemy import text
+
+    try:
+        session = get_session()
+
+        # Migration: Add alarm_name column to alarms table if it doesn't exist
+        if "sqlite" in str(_engine.url):
+            # SQLite: Check if column exists
+            result = session.execute(
+                text("PRAGMA table_info(alarms)")
+            ).fetchall()
+            column_names = [row[1] for row in result]
+
+            if "alarm_name" not in column_names:
+                session.execute(
+                    text("ALTER TABLE alarms ADD COLUMN alarm_name VARCHAR(255) DEFAULT NULL")
+                )
+                session.commit()
+                import logging
+                logging.getLogger(__name__).info("✓ Migration: Added alarm_name column to alarms table")
+        else:
+            # PostgreSQL/MySQL: Check if column exists
+            try:
+                session.execute(
+                    text("SELECT alarm_name FROM alarms LIMIT 1")
+                )
+            except Exception:
+                # Column doesn't exist, add it
+                session.execute(
+                    text("ALTER TABLE alarms ADD COLUMN alarm_name VARCHAR(255) DEFAULT NULL")
+                )
+                session.commit()
+                import logging
+                logging.getLogger(__name__).info("✓ Migration: Added alarm_name column to alarms table")
+
+        session.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Migration check failed: {e}")
 
 
 def init_database(database_url: str) -> None:
@@ -114,6 +158,9 @@ def init_database(database_url: str) -> None:
 
     # Create all tables
     Base.metadata.create_all(bind=_engine)
+
+    # Apply any pending migrations
+    _migrate_schema()
 
 
 def get_session() -> Session:
