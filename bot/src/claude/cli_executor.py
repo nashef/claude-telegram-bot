@@ -90,10 +90,11 @@ class ClaudeProcessManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        model_override: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code CLI command."""
         # Build command
-        cmd = self._build_command(prompt, session_id, continue_session)
+        cmd = self._build_command(prompt, session_id, continue_session, model_override)
 
         # Create process ID
         process_id = str(uuid.uuid4())
@@ -143,7 +144,7 @@ class ClaudeProcessManager:
                 del self.active_processes[process_id]
 
     def _build_command(
-        self, prompt: str, session_id: Optional[str], continue_session: bool
+        self, prompt: str, session_id: Optional[str], continue_session: bool, model_override: Optional[str] = None
     ) -> List[str]:
         """Build Claude CLI command (richardatct approach)."""
         cmd = ["claude"]  # CLI binary
@@ -169,9 +170,10 @@ class ClaudeProcessManager:
         cmd.extend(["--output-format", "stream-json"])
         cmd.extend(["--verbose"])
 
-        # Model selection
-        if hasattr(self.config, 'claude_model') and self.config.claude_model:
-            cmd.extend(["--model", self.config.claude_model])
+        # Model selection - use override if provided, otherwise use configured model
+        model_to_use = model_override or self.config.claude_model
+        if model_to_use:
+            cmd.extend(["--model", model_to_use])
 
         # Safety limits
         cmd.extend(["--max-turns", str(self.config.claude_max_turns)])

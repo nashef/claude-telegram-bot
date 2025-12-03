@@ -657,3 +657,62 @@ async def alarm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"_... and {total_count - 5} more alarms_"
 
     await update.message.reply_text(message, parse_mode="Markdown")
+
+
+@error_handler
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /model command - switch Claude model for this session."""
+    user_id = update.effective_user.id
+
+    if not security_validator.is_authorized(user_id):
+        await update.message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Parse the model argument
+    if not context.args or len(context.args) == 0:
+        # Show current model
+        current_model = context.user_data.get('claude_model_override') or settings.claude_model
+        await update.message.reply_text(
+            f"🤖 **Current Model**: `{current_model}`\n\n"
+            f"**Available models:**\n"
+            f"  `/model sonnet` - claude-sonnet-4-5\n"
+            f"  `/model haiku` - claude-haiku-4-5\n"
+            f"  `/model opus` - claude-opus-4-5\n"
+            f"  `/model reset` - back to config default",
+            parse_mode="Markdown"
+        )
+        return
+
+    model_name = context.args[0].lower()
+
+    # Validate model name and map to API alias
+    model_aliases = {
+        "sonnet": "claude-sonnet-4-5",
+        "haiku": "claude-haiku-4-5",
+        "opus": "claude-opus-4-5",
+        "reset": None,  # None means use default
+    }
+
+    if model_name not in model_aliases:
+        await update.message.reply_text(
+            f"❌ Unknown model: `{model_name}`\n\n"
+            f"**Available models:** sonnet, haiku, opus, reset",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Set the model override for this session
+    if model_aliases[model_name] is None:
+        # Reset to default
+        context.user_data.pop('claude_model_override', None)
+        await update.message.reply_text(
+            f"✅ Model reset to default: `{settings.claude_model}`",
+            parse_mode="Markdown"
+        )
+    else:
+        context.user_data['claude_model_override'] = model_aliases[model_name]
+        await update.message.reply_text(
+            f"✅ Model switched to: `{model_aliases[model_name]}`\n\n"
+            f"_This setting is temporary and will reset when the bot restarts._",
+            parse_mode="Markdown"
+        )

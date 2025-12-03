@@ -349,12 +349,16 @@ async def claude_worker(shutdown_event=None):
 
             # Handle potential image format mismatch error
             try:
+                # Get model override from session context if set
+                model_override = request.context.user_data.get('claude_model_override') if request.context else None
+
                 response_obj = await claude_executor.execute_command(
                     prompt=request.prompt,
                     working_directory=claude_executor.config.approved_directory,
                     session_id=session_id,
                     continue_session=bool(session_id),
-                    stream_callback=stream_callback
+                    stream_callback=stream_callback,
+                    model_override=model_override
                 )
 
                 # Check if the response indicates an error
@@ -369,7 +373,8 @@ async def claude_worker(shutdown_event=None):
                             working_directory=claude_executor.config.approved_directory,
                             session_id=None,  # Start fresh session
                             continue_session=False,
-                            stream_callback=stream_callback
+                            stream_callback=stream_callback,
+                            model_override=model_override
                         )
                         # If still an error after retry, raise it
                         if hasattr(response_obj, 'is_error') and response_obj.is_error:
@@ -389,7 +394,8 @@ async def claude_worker(shutdown_event=None):
                         working_directory=claude_executor.config.approved_directory,
                         session_id=None,  # Start fresh session
                         continue_session=False,
-                        stream_callback=stream_callback
+                        stream_callback=stream_callback,
+                        model_override=model_override
                     )
                     # If still an error after retry, raise it
                     if hasattr(response_obj, 'is_error') and response_obj.is_error:
