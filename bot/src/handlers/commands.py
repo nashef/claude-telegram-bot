@@ -678,7 +678,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"  `/model sonnet` - claude-sonnet-4-5\n"
             f"  `/model haiku` - claude-haiku-4-5\n"
             f"  `/model opus` - claude-opus-4-5\n"
-            f"  `/model reset` - back to config default",
+            f"  `/model reset` - set to default (`{settings.claude_model}`)",
             parse_mode="Markdown"
         )
         return
