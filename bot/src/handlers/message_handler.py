@@ -496,13 +496,54 @@ async def claude_worker(shutdown_event=None):
                 # For alarm requests without Telegram context, send direct message to user
                 if user_id and request.alarm_id:
                     try:
+                        response_text = response_obj.content
+
+                        # Parse alarm commands from response
+                        # Format: [SCHEDULE_ALARM <id> <seconds> <prompt>] or [CANCEL_ALARM <id>]
+                        import re
+                        schedule_cmds = re.findall(r'\[SCHEDULE_ALARM\s+(\S+)\s+(\d+)\s+"([^"]+)"\]', response_text)
+                        cancel_cmds = re.findall(r'\[CANCEL_ALARM\s+(\S+)\]', response_text)
+
+                        # Execute schedule commands
+                        for cmd_id, seconds, prompt in schedule_cmds:
+                            try:
+                                from src.database.manager import db_manager
+                                from datetime import datetime, timedelta, timezone
+
+                                # Calculate one-shot time
+                                now = datetime.now(timezone.utc)
+                                one_shot_time = now + timedelta(seconds=int(seconds))
+
+                                # Create the alarm
+                                db_manager.create_alarm(
+                                    user_id=user_id,
+                                    prompt=prompt,
+                                    one_shot_time=one_shot_time
+                                )
+                                logger.info(f"🔔 Scheduled alarm {cmd_id} for {one_shot_time}: {prompt}")
+                            except Exception as e:
+                                logger.error(f"Failed to schedule alarm {cmd_id}: {e}")
+
+                        # Execute cancel commands
+                        for alarm_id in cancel_cmds:
+                            try:
+                                from src.database.manager import db_manager
+                                db_manager.update_alarm(alarm_id, status="cancelled")
+                                logger.info(f"🔔 Cancelled alarm {alarm_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to cancel alarm {alarm_id}: {e}")
+
+                        # Remove command markup from response before sending
+                        clean_response = re.sub(r'\[SCHEDULE_ALARM[^\]]*\]|\[CANCEL_ALARM[^\]]*\]', '', response_text).strip()
+
                         # Send result directly to the user via Telegram
-                        await _application.bot.send_message(
-                            chat_id=user_id,
-                            text=response_obj.content,
-                            parse_mode="Markdown"
-                        )
-                        logger.info(f"🔔 Alarm {request.alarm_id} result sent to user {user_id}")
+                        if clean_response:
+                            await _application.bot.send_message(
+                                chat_id=user_id,
+                                text=clean_response,
+                                parse_mode="Markdown"
+                            )
+                            logger.info(f"🔔 Alarm {request.alarm_id} result sent to user {user_id}")
                     except Exception as e:
                         logger.error(f"Failed to send alarm result to user {user_id}: {e}")
                         logger.info(f"🔔 Alarm {request.alarm_id} result (logged): {response_obj.content}")
