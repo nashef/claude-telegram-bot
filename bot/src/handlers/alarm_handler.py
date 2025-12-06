@@ -209,10 +209,11 @@ async def _fire_alarm(alarm: dict) -> None:
         else:
             logger.info(f"⚠️ No last request context available, alarm will run without Telegram context")
 
-        # Send status message and typing indicator if we have Telegram context
-        if has_context and _application:
+        # Send status message and typing indicator to the user
+        if _application:
             try:
-                chat_id = update.effective_chat.id
+                # Use chat_id from update if available, otherwise use user_id directly
+                chat_id = update.effective_chat.id if has_context else alarm['user_id']
                 # Send "processing" message
                 alarm_name = alarm.get("alarm_name", "Alarm")
                 await _application.bot.send_message(
@@ -225,7 +226,7 @@ async def _fire_alarm(alarm: dict) -> None:
                     chat_id=chat_id,
                     action="typing"
                 )
-                logger.info(f"Sent status message for alarm {alarm['id']}")
+                logger.info(f"Sent status message for alarm {alarm['id']} to chat {chat_id}")
             except Exception as e:
                 logger.warning(f"Failed to send alarm status message: {e}")
 
