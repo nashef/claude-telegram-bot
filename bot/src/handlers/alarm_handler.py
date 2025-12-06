@@ -184,6 +184,9 @@ async def _fire_alarm(alarm: dict) -> None:
     logger.info(f"Firing alarm {alarm['id']} for user {alarm['user_id']}")
 
     try:
+        # Import here to avoid circular imports
+        from src.handlers.message_handler import _application
+
         # Use the last request's context if available (like heartbeats do)
         # This allows us to send results back to the user via Telegram
         # Note: _last_request is only updated with user/heartbeat requests, not alarm requests,
@@ -205,6 +208,26 @@ async def _fire_alarm(alarm: dict) -> None:
                 logger.info(f"⚠️ Last request is for different user, alarm will run without context")
         else:
             logger.info(f"⚠️ No last request context available, alarm will run without Telegram context")
+
+        # Send status message and typing indicator if we have Telegram context
+        if has_context and _application:
+            try:
+                chat_id = update.effective_chat.id
+                # Send "processing" message
+                alarm_name = alarm.get("alarm_name", "Alarm")
+                await _application.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⏰ {alarm_name} processing...",
+                    disable_notification=True
+                )
+                # Set typing indicator
+                await _application.bot.send_chat_action(
+                    chat_id=chat_id,
+                    action="typing"
+                )
+                logger.info(f"Sent status message for alarm {alarm['id']}")
+            except Exception as e:
+                logger.warning(f"Failed to send alarm status message: {e}")
 
         # Queue the alarm as a Claude request
         await claude_queue.put(ClaudeRequest(
