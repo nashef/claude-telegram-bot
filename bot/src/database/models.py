@@ -90,6 +90,7 @@ class Alarm(Base):
     one_shot_time = Column(DateTime, nullable=True)  # For one-shot alarms
     cron_schedule = Column(String(255), nullable=True)  # For recurring alarms
     status = Column(String(50), default="active")  # active, fired, disabled
+    last_fired = Column(DateTime, nullable=True)  # Track when recurring alarm last fired
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -124,6 +125,14 @@ def _migrate_schema() -> None:
                 session.commit()
                 import logging
                 logging.getLogger(__name__).info("✓ Migration: Added alarm_name column to alarms table")
+
+            if "last_fired" not in column_names:
+                session.execute(
+                    text("ALTER TABLE alarms ADD COLUMN last_fired DATETIME DEFAULT NULL")
+                )
+                session.commit()
+                import logging
+                logging.getLogger(__name__).info("✓ Migration: Added last_fired column to alarms table")
         else:
             # PostgreSQL/MySQL: Check if column exists
             try:

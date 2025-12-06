@@ -346,6 +346,7 @@ class DatabaseManager:
                     "one_shot_time": alarm.one_shot_time,
                     "cron_schedule": alarm.cron_schedule,
                     "status": alarm.status,
+                    "last_fired": alarm.last_fired,
                     "created_at": alarm.created_at,
                     "updated_at": alarm.updated_at,
                 }
@@ -359,7 +360,8 @@ class DatabaseManager:
         status: Optional[str] = None,
         one_shot_time: Optional[datetime] = None,
         cron_schedule: Optional[str] = None,
-        alarm_name: Optional[str] = None
+        alarm_name: Optional[str] = None,
+        last_fired: Optional[datetime] = None
     ) -> bool:
         """Update an alarm."""
         with db_session() as session:
@@ -375,6 +377,8 @@ class DatabaseManager:
                     alarm.cron_schedule = cron_schedule
                 if alarm_name is not None:
                     alarm.alarm_name = alarm_name
+                if last_fired is not None:
+                    alarm.last_fired = last_fired
                 alarm.updated_at = datetime.utcnow()
                 logger.info(f"Alarm updated: {alarm_id} ({alarm_name})")
                 return True

@@ -3,7 +3,7 @@ Alarm handler for scheduled and one-time alarms.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from croniter import croniter
 from typing import Optional
 import pytz
@@ -60,10 +60,13 @@ async def alarm_worker(shutdown_event=None):
                     # Check one-shot alarm
                     if alarm["one_shot_time"]:
                         # Make one_shot_time timezone-aware if it isn't
+                        # One-shot times are stored as naive UTC datetimes
                         one_shot = alarm["one_shot_time"]
                         if one_shot.tzinfo is None:
+                            # Treat as UTC, then convert to user timezone
+                            one_shot = pytz.UTC.localize(one_shot)
                             tz = pytz.timezone(settings.user_timezone)
-                            one_shot = tz.localize(one_shot)
+                            one_shot = one_shot.astimezone(tz)
 
                         if one_shot <= now:
                             # This alarm is due right now
@@ -74,8 +77,41 @@ async def alarm_worker(shutdown_event=None):
                     # Check recurring alarm (cron)
                     elif alarm["cron_schedule"]:
                         try:
-                            cron = croniter(alarm["cron_schedule"], now)
-                            alarm_time = cron.get_next(datetime)
+                            # Add 1 second to handle exact boundary condition
+                            # (get_prev at exactly 6:00:00 returns yesterday's 6 AM, not today's)
+                            cron = croniter(alarm["cron_schedule"], now + timedelta(seconds=1))
+                            # Get the most recent cron slot (at or before now+1s)
+                            prev_slot = cron.get_prev(datetime)
+                            # Make timezone-aware if needed
+                            if prev_slot.tzinfo is None:
+                                tz = pytz.timezone(settings.user_timezone)
+                                prev_slot = tz.localize(prev_slot)
+
+                            # Check if we're within the cron slot (within 60 seconds of the scheduled time)
+                            # This handles the case where we check at exactly 6:00:00 or shortly after
+                            time_since_slot = (now - prev_slot).total_seconds()
+                            if 0 <= time_since_slot < 60:
+                                # We're in the current cron window - check if already fired
+                                last_fired = alarm.get("last_fired")
+                                if last_fired:
+                                    # Make last_fired timezone-aware if needed
+                                    if last_fired.tzinfo is None:
+                                        tz = pytz.timezone(settings.user_timezone)
+                                        last_fired = tz.localize(last_fired)
+                                    # Check if we already fired within this minute
+                                    time_since_fired = (now - last_fired).total_seconds()
+                                    if time_since_fired < 60:
+                                        # Already fired this slot, get next occurrence
+                                        alarm_time = cron.get_next(datetime)
+                                    else:
+                                        # Haven't fired recently, fire now
+                                        alarm_time = now
+                                else:
+                                    # Never fired, fire now
+                                    alarm_time = now
+                            else:
+                                # Get next occurrence
+                                alarm_time = cron.get_next(datetime)
                         except Exception as e:
                             logger.error(f"Invalid cron schedule for alarm {alarm['id']}: {e}")
                             # Disable this alarm
@@ -186,6 +222,10 @@ async def _fire_alarm(alarm: dict) -> None:
         if alarm["one_shot_time"]:
             logger.info(f"Disabling one-shot alarm {alarm['id']}")
             db_manager.update_alarm(alarm["id"], status="completed")
+        # Handle recurring alarms - update last_fired timestamp
+        elif alarm["cron_schedule"]:
+            logger.info(f"Updating last_fired for recurring alarm {alarm['id']}")
+            db_manager.update_alarm(alarm["id"], last_fired=datetime.now())
 
     except Exception as e:
         logger.error(f"Failed to fire alarm {alarm['id']}: {e}", exc_info=True)
