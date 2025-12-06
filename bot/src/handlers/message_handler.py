@@ -30,6 +30,7 @@ class ClaudeRequest:
     user_id: int | None = None  # For alarm-triggered requests without Telegram Update
     alarm_id: str | None = None  # Track which alarm triggered this request
     original_message: str | None = None  # Original message before template processing (for display)
+    typing_chat_id: int | None = None  # Chat ID to show typing indicator while processing alarm
 
 # Global queue - single worker processes all requests sequentially
 claude_queue: Queue[ClaudeRequest] = Queue()
@@ -169,6 +170,22 @@ async def _send_typing_to_user(user_id: int):
         pass
     except Exception as e:
         logger.debug(f"Typing indicator error for user {user_id}: {e}")
+
+
+async def _send_alarm_typing(application, chat_id: int):
+    """Send typing indicator every 4 seconds for alarm processing."""
+    try:
+        while True:
+            await application.bot.send_chat_action(
+                chat_id=chat_id,
+                action=ChatAction.TYPING
+            )
+            await asyncio.sleep(4)  # Typing lasts 5s, renew every 4s
+    except asyncio.CancelledError:
+        # Task was cancelled, stop gracefully
+        pass
+    except Exception as e:
+        logger.debug(f"Typing indicator error for alarm chat {chat_id}: {e}")
 
 
 async def claude_worker(shutdown_event=None):
@@ -331,7 +348,7 @@ async def claude_worker(shutdown_event=None):
             if not session_id and request.context:
                 session_id = request.context.user_data.get('claude_session_id')
 
-            # Start typing indicator when Claude subprocess starts (skip for alarm requests)
+            # Start typing indicator when Claude subprocess starts
             if request.context and request.update:
                 typing_task = asyncio.create_task(
                     _send_typing_periodically(request.context, request.update)
@@ -340,6 +357,11 @@ async def claude_worker(shutdown_event=None):
                 # For voice assistant, send typing indicator to the user directly
                 typing_task = asyncio.create_task(
                     _send_typing_to_user(user_id)
+                )
+            elif request.source == "alarm" and request.typing_chat_id and _application:
+                # For alarm requests, send typing indicator using the stored chat_id
+                typing_task = asyncio.create_task(
+                    _send_alarm_typing(_application, request.typing_chat_id)
                 )
             else:
                 typing_task = None

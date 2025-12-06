@@ -209,7 +209,8 @@ async def _fire_alarm(alarm: dict) -> None:
         else:
             logger.info(f"⚠️ No last request context available, alarm will run without Telegram context")
 
-        # Send status message and typing indicator to the user
+        # Store chat_id for later use
+        chat_id = None
         if _application:
             try:
                 # Use chat_id from update if available, otherwise use user_id directly
@@ -228,11 +229,6 @@ async def _fire_alarm(alarm: dict) -> None:
                     text=f"⏰ {alarm_name} processing...",
                     disable_notification=True
                 )
-                # Set typing indicator
-                await _application.bot.send_chat_action(
-                    chat_id=chat_id,
-                    action="typing"
-                )
                 logger.info(f"Sent status message for alarm {alarm['id']} to chat {chat_id}")
             except Exception as e:
                 logger.warning(f"Failed to send alarm status message: {e}")
@@ -244,7 +240,8 @@ async def _fire_alarm(alarm: dict) -> None:
             context=context if has_context else None,
             source="alarm",
             alarm_id=alarm["id"],
-            user_id=alarm["user_id"]
+            user_id=alarm["user_id"],
+            typing_chat_id=chat_id  # Pass chat_id for typing indicator during processing
         ))
 
         logger.info(f"✅ Alarm {alarm['id']} queued successfully")
