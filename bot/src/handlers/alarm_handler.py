@@ -215,7 +215,14 @@ async def _fire_alarm(alarm: dict) -> None:
                 # Use chat_id from update if available, otherwise use user_id directly
                 chat_id = update.effective_chat.id if has_context else alarm['user_id']
                 # Send "processing" message
-                alarm_name = alarm.get("alarm_name", "Alarm")
+                # Use alarm_name if set, otherwise extract first 30 chars from prompt
+                alarm_name = alarm.get("alarm_name")
+                if not alarm_name:
+                    # Extract first line or first 30 chars of prompt as display name
+                    prompt_text = alarm.get("prompt", "Alarm")
+                    alarm_name = prompt_text.split('\n')[0][:30]
+                    if len(prompt_text) > 30:
+                        alarm_name += "..."
                 await _application.bot.send_message(
                     chat_id=chat_id,
                     text=f"⏰ {alarm_name} processing...",
