@@ -507,7 +507,6 @@ async def claude_worker(shutdown_event=None):
                         # Execute schedule commands
                         for cmd_id, seconds, prompt in schedule_cmds:
                             try:
-                                from src.database.manager import db_manager
                                 from datetime import datetime, timedelta, timezone
 
                                 # Calculate one-shot time
@@ -527,7 +526,6 @@ async def claude_worker(shutdown_event=None):
                         # Execute cancel commands
                         for alarm_id in cancel_cmds:
                             try:
-                                from src.database.manager import db_manager
                                 db_manager.update_alarm(alarm_id, status="cancelled")
                                 logger.info(f"🔔 Cancelled alarm {alarm_id}")
                             except Exception as e:
