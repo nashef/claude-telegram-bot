@@ -689,7 +689,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model_aliases = {
         "sonnet": "claude-sonnet-4-5",
         "haiku": "claude-haiku-4-5",
-        "opus": "claude-opus-4-5",
+        "opus": "claude-opus-4-6",
         "reset": None,  # None means use default
     }
 

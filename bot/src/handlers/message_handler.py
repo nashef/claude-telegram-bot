@@ -692,7 +692,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏸️ Bot is paused. An admin needs to /resume it.")
         return
 
-    logger.info(f"Received user message: {message_text}")
+    # Format message with chat context if from a group
+    chat_type = update.message.chat.type
+    if chat_type in ("group", "supergroup"):
+        # Get group name
+        group_name = update.message.chat.title or "Unknown Group"
+
+        # Get sender name (prefer username, fallback to first name)
+        sender = update.message.from_user
+        sender_name = f"@{sender.username}" if sender.username else sender.first_name
+
+        # Format with group context
+        formatted_message = f'[From: {group_name}]: {sender_name} says, "{message_text}"'
+        logger.info(f"Received group message from {group_name}: {sender_name}: {message_text}")
+    else:
+        # Private DM - use original format
+        formatted_message = message_text
+        logger.info(f"Received user message: {message_text}")
 
     # Check if this is a thread marker
     is_start = _is_thread_start(message_text)
@@ -702,8 +718,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in _thread_states:
         thread = _thread_states[user_id]
 
-        # Add message to thread
-        thread.messages.append(message_text)
+        # Add formatted message to thread
+        thread.messages.append(formatted_message)
         thread.update = update
         thread.context = context
 
@@ -723,7 +739,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current_time = asyncio.get_event_loop().time()
             timer_task = asyncio.create_task(_thread_timer(user_id))
             _thread_states[user_id] = ThreadState(
-                messages=[message_text],
+                messages=[formatted_message],
                 update=update,
                 context=context,
                 timer_task=timer_task,
@@ -738,7 +754,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timer_task = asyncio.create_task(_thread_timer(user_id))
 
         _thread_states[user_id] = ThreadState(
-            messages=[message_text],
+            messages=[formatted_message],
             update=update,
             context=context,
             timer_task=timer_task,
@@ -752,7 +768,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Not in a thread and no thread marker - process immediately
         logger.info(f"Immediate processing (no thread) for user {user_id}")
         await claude_queue.put(ClaudeRequest(
-            prompt=message_text,
+            prompt=formatted_message,
             update=update,
             context=context,
             source="user_text"
@@ -799,8 +815,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get caption if any
     caption = update.message.caption or "no caption"
 
-    # Create notification message for Claude
-    notification = f"leaf sent you a photo: {filepath} Caption: {caption}"
+    # Format notification with chat context if from a group
+    chat_type = update.message.chat.type
+    if chat_type in ("group", "supergroup"):
+        # Get group name and sender
+        group_name = update.message.chat.title or "Unknown Group"
+        sender = update.message.from_user
+        sender_name = f"@{sender.username}" if sender.username else sender.first_name
+
+        # Create notification message with group context
+        notification = f'[From: {group_name}]: {sender_name} sent a photo: {filepath} Caption: {caption}'
+    else:
+        # Private DM - use original format
+        notification = f"leaf sent you a photo: {filepath} Caption: {caption}"
 
     # Enqueue photo notification for worker to process
     logger.info(f"Enqueuing photo notification: {filename}")
@@ -863,8 +890,19 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Determine if it's a voice message or audio file
     audio_type = "voice message" if update.message.voice else "audio file"
 
-    # Create notification message for Claude
-    notification = f"leaf sent you a {audio_type}: {filepath} Caption: {caption}"
+    # Format notification with chat context if from a group
+    chat_type = update.message.chat.type
+    if chat_type in ("group", "supergroup"):
+        # Get group name and sender
+        group_name = update.message.chat.title or "Unknown Group"
+        sender = update.message.from_user
+        sender_name = f"@{sender.username}" if sender.username else sender.first_name
+
+        # Create notification message with group context
+        notification = f'[From: {group_name}]: {sender_name} sent a {audio_type}: {filepath} Caption: {caption}'
+    else:
+        # Private DM - use original format
+        notification = f"leaf sent you a {audio_type}: {filepath} Caption: {caption}"
 
     # Enqueue audio notification for worker to process
     logger.info(f"Enqueuing audio notification: {filename}")
@@ -921,8 +959,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = update.message.caption or "no caption"
     mime_type = document.mime_type or "unknown type"
 
-    # Create notification message for Claude
-    notification = f"leaf sent you a file: {filepath} (Type: {mime_type}) Caption: {caption}"
+    # Format notification with chat context if from a group
+    chat_type = update.message.chat.type
+    if chat_type in ("group", "supergroup"):
+        # Get group name and sender
+        group_name = update.message.chat.title or "Unknown Group"
+        sender = update.message.from_user
+        sender_name = f"@{sender.username}" if sender.username else sender.first_name
+
+        # Create notification message with group context
+        notification = f'[From: {group_name}]: {sender_name} sent a file: {filepath} (Type: {mime_type}) Caption: {caption}'
+    else:
+        # Private DM - use original format
+        notification = f"leaf sent you a file: {filepath} (Type: {mime_type}) Caption: {caption}"
 
     # Enqueue document notification for worker to process
     logger.info(f"Enqueuing document notification: {filename}")
