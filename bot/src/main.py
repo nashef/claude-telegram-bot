@@ -51,6 +51,10 @@ def setup_logging():
 
     # File handler if configured
     if settings.log_file:
+        import os
+        log_dir = os.path.dirname(settings.log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
         file_handler = logging.FileHandler(settings.log_file)
         file_handler.setLevel(getattr(logging, settings.log_file_level.upper()))
         file_handler.setFormatter(formatter)
