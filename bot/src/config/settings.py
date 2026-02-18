@@ -12,6 +12,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Bot configuration settings loaded from environment variables."""
 
+    # Claude Authentication
+    anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+
     # Telegram Configuration
     telegram_bot_token: str = Field(..., env="TELEGRAM_BOT_TOKEN")
     telegram_bot_username: str = Field(..., env="TELEGRAM_BOT_USERNAME")
