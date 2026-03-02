@@ -188,17 +188,30 @@ class ClaudeProcessManager:
         time_str = current_time.strftime('%B %d, %Y %I:%M %p %Z')
         cmd.extend(["--append-system-prompt", f"The local time for leaf is {time_str}"])
 
+        # Disable thinking if configured
+        if hasattr(self.config, 'claude_thinking_enabled') and not self.config.claude_thinking_enabled:
+            cmd.extend(["--settings", '{"alwaysThinkingEnabled": false}'])
+
         logger.debug(f"Built command: {' '.join(cmd)}")
         return cmd
 
     async def _start_process(self, cmd: List[str], cwd: Path) -> asyncio.subprocess.Process:
         """Start Claude CLI subprocess."""
+        # Build environment with any custom API settings (e.g., for Ollama)
+        env = os.environ.copy()
+
+        # Inject Ollama/custom API settings if configured
+        if hasattr(self.config, 'anthropic_auth_token') and self.config.anthropic_auth_token:
+            env['ANTHROPIC_AUTH_TOKEN'] = self.config.anthropic_auth_token
+        if hasattr(self.config, 'anthropic_base_url') and self.config.anthropic_base_url:
+            env['ANTHROPIC_BASE_URL'] = self.config.anthropic_base_url
+
         return await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
-            env=os.environ.copy(),
+            env=env,
             limit=1024 * 1024 * 512,  # 512MB memory limit
         )
 

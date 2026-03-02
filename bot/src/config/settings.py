@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # Claude Authentication
     anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
 
+    # Ollama / Custom API endpoint support
+    # Set ANTHROPIC_AUTH_TOKEN=ollama and ANTHROPIC_BASE_URL=http://localhost:11434 for local Ollama
+    anthropic_auth_token: Optional[str] = Field(None, env="ANTHROPIC_AUTH_TOKEN")
+    anthropic_base_url: Optional[str] = Field(None, env="ANTHROPIC_BASE_URL")
+
     # Telegram Configuration
     telegram_bot_token: str = Field(..., env="TELEGRAM_BOT_TOKEN")
     telegram_bot_username: str = Field(..., env="TELEGRAM_BOT_USERNAME")
@@ -47,6 +52,7 @@ class Settings(BaseSettings):
         ],
         env="CLAUDE_ALLOWED_TOOLS",
     )
+    claude_thinking_enabled: bool = Field(True, env="CLAUDE_THINKING_ENABLED")
 
     # Rate Limiting
     rate_limit_requests: int = Field(10, env="RATE_LIMIT_REQUESTS")

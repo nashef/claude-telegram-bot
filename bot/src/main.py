@@ -28,6 +28,17 @@ from src.handlers.alarm_handler import alarm_worker
 from src.database.models import init_database, close_database
 from src.api.alarms import app as alarm_api
 
+# Filter to suppress noisy polling logs
+class TelegramPollingFilter(logging.Filter):
+    """Filter out successful getUpdates and sendChatAction requests from httpx logs."""
+    def filter(self, record):
+        msg = record.getMessage()
+        if '200 OK' in msg:
+            if 'getUpdates' in msg or 'sendChatAction' in msg:
+                return False
+        return True
+
+
 # Configure logging
 def setup_logging():
     """Configure logging with console and optional file output."""
@@ -60,6 +71,9 @@ def setup_logging():
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
         logging.info(f"File logging enabled: {settings.log_file} (level: {settings.log_file_level})")
+
+    # Add filter to httpx logger to suppress noisy polling logs
+    logging.getLogger("httpx").addFilter(TelegramPollingFilter())
 
 setup_logging()
 logger = logging.getLogger(__name__)
