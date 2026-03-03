@@ -178,10 +178,6 @@ class ClaudeProcessManager:
         # Safety limits
         cmd.extend(["--max-turns", str(self.config.claude_max_turns)])
 
-        # Max tokens limit
-        if hasattr(self.config, 'claude_max_tokens') and self.config.claude_max_tokens:
-            cmd.extend(["--max-tokens", str(self.config.claude_max_tokens)])
-
         # Allowed tools
         if hasattr(self.config, 'claude_allowed_tools') and self.config.claude_allowed_tools:
             cmd.extend(["--allowedTools", ",".join(self.config.claude_allowed_tools)])

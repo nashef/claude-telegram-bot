@@ -53,7 +53,6 @@ class Settings(BaseSettings):
         env="CLAUDE_ALLOWED_TOOLS",
     )
     claude_thinking_enabled: bool = Field(True, env="CLAUDE_THINKING_ENABLED")
-    claude_max_tokens: Optional[int] = Field(None, env="CLAUDE_MAX_TOKENS")
 
     # Rate Limiting
     rate_limit_requests: int = Field(10, env="RATE_LIMIT_REQUESTS")
