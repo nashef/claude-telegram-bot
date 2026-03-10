@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     approved_directory: Path = Field(..., env="APPROVED_DIRECTORY")
     allowed_users: List[int] = Field(..., env="ALLOWED_USERS")
 
+    # Executor Selection
+    executor_type: str = Field("claude", env="EXECUTOR_TYPE")  # "claude" or "nanobot"
+
     # Claude Configuration
     use_sdk: bool = Field(False, env="USE_SDK")
     claude_model: str = Field("sonnet", env="CLAUDE_MODEL")

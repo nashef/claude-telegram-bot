@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
 
-from src.claude.cli_executor import ClaudeProcessManager, StreamUpdate
+from src.claude.cli_executor import ClaudeProcessManager, NanobotProcessManager, StreamUpdate
 from src.security.validator import security_validator
 from src.config.settings import settings
 from src.utils.error_handler import error_handler, categorize_error
@@ -16,8 +16,13 @@ from src.database.manager import db_manager
 
 logger = logging.getLogger(__name__)
 
-# Global executor (using CLI subprocess like richardatct)
-claude_executor = ClaudeProcessManager(settings)
+# Global executor - select based on config
+if settings.executor_type == "nanobot":
+    claude_executor = NanobotProcessManager(settings)
+    logger.info("Using Nanobot executor")
+else:
+    claude_executor = ClaudeProcessManager(settings)
+    logger.info("Using Claude Code CLI executor")
 
 # Queue-based architecture to prevent race conditions
 @dataclass

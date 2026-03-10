@@ -296,6 +296,7 @@ class ClaudeProcessManager:
         if return_code != 0:
             stderr = await process.stderr.read()
             stderr_msg = stderr.decode("utf-8", errors="replace")
+            stdout_content = "\n".join(all_content) if all_content else "(empty)"
 
             # Use error messages from stream if available, otherwise use stderr
             if error_messages:
@@ -303,7 +304,13 @@ class ClaudeProcessManager:
             else:
                 error_msg = stderr_msg if stderr_msg.strip() else "Unknown error"
 
-            logger.error(f"Claude CLI failed with code {return_code}: {error_msg}")
+            logger.error(
+                f"Claude CLI failed:\n"
+                f"  Exit code: {return_code}\n"
+                f"  Error: {error_msg}\n"
+                f"  Stderr: {stderr_msg or '(empty)'}\n"
+                f"  Stdout: {stdout_content[:1000]}{'...' if len(stdout_content) > 1000 else ''}"
+            )
 
             return ClaudeResponse(
                 content=f"Error: {error_msg}",
@@ -404,3 +411,134 @@ class ClaudeProcessManager:
             )
 
         return None
+
+
+class NanobotProcessManager:
+    """Manage Nanobot subprocess execution."""
+
+    def __init__(self, config):
+        """Initialize process manager with configuration."""
+        self.config = config
+        self.active_processes: Dict[str, asyncio.subprocess.Process] = {}
+
+    async def execute_command(
+        self,
+        prompt: str,
+        working_directory: Path,
+        session_id: Optional[str] = None,
+        continue_session: bool = False,
+        stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        model_override: Optional[str] = None,
+    ) -> ClaudeResponse:
+        """Execute Nanobot CLI command."""
+        # Build command
+        cmd = self._build_command(prompt)
+
+        # Create process ID
+        process_id = str(uuid.uuid4())
+
+        logger.info(
+            f"Starting Nanobot process {process_id} in {working_directory}"
+        )
+
+        try:
+            # Start subprocess
+            process = await self._start_process(cmd, working_directory)
+            self.active_processes[process_id] = process
+
+            # Handle output with timeout
+            result = await asyncio.wait_for(
+                self._handle_process_output(process, stream_callback),
+                timeout=self.config.claude_timeout_seconds,
+            )
+
+            logger.info(f"Nanobot completed successfully")
+
+            return result
+
+        except asyncio.TimeoutError:
+            # Kill on timeout
+            if process_id in self.active_processes:
+                self.active_processes[process_id].kill()
+                await self.active_processes[process_id].wait()
+
+            logger.error(
+                f"Nanobot timed out after {self.config.claude_timeout_seconds}s"
+            )
+            raise TimeoutError(
+                f"Nanobot timed out after {self.config.claude_timeout_seconds}s"
+            )
+
+        except Exception as e:
+            logger.error(f"Nanobot process failed: {e}")
+            raise
+
+        finally:
+            # Cleanup
+            if process_id in self.active_processes:
+                del self.active_processes[process_id]
+
+    def _build_command(self, prompt: str) -> List[str]:
+        """Build Nanobot CLI command."""
+        cmd = ["nanobot", "agent", "-m", prompt, "--no-markdown"]
+        logger.debug(f"Built nanobot command: {' '.join(cmd)}")
+        return cmd
+
+    async def _start_process(self, cmd: List[str], cwd: Path) -> asyncio.subprocess.Process:
+        """Start Nanobot subprocess."""
+        env = os.environ.copy()
+
+        return await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+            env=env,
+        )
+
+    async def _handle_process_output(
+        self, process: asyncio.subprocess.Process, stream_callback: Optional[Callable]
+    ) -> ClaudeResponse:
+        """Parse plain text output from Nanobot."""
+        # Read all stdout
+        stdout, stderr = await process.communicate()
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+
+        return_code = process.returncode
+
+        if return_code != 0:
+            error_msg = stderr_text if stderr_text.strip() else "Unknown error"
+            logger.error(
+                f"Nanobot failed:\n"
+                f"  Exit code: {return_code}\n"
+                f"  Error: {error_msg}\n"
+                f"  Stderr: {stderr_text or '(empty)'}\n"
+                f"  Stdout: {stdout_text[:1000]}{'...' if len(stdout_text) > 1000 else ''}"
+            )
+
+            return ClaudeResponse(
+                content=f"Error: {error_msg}",
+                session_id="",
+                is_error=True,
+                error_type="process_error",
+            )
+
+        # Send final content to stream callback if provided
+        if stream_callback and stdout_text:
+            try:
+                await stream_callback(StreamUpdate(
+                    type="assistant",
+                    content=stdout_text,
+                ))
+            except Exception as e:
+                logger.warning(f"Stream callback failed: {e}")
+
+        return ClaudeResponse(
+            content=stdout_text.strip() if stdout_text else "No response",
+            session_id="",  # Nanobot doesn't use session IDs the same way
+            cost=0.0,  # Nanobot doesn't report cost
+            duration_ms=0,
+            num_turns=1,
+            tools_used=[],
+        )
