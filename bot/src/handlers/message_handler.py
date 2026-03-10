@@ -386,8 +386,29 @@ async def claude_worker(shutdown_event=None):
                 # Check if the response indicates an error
                 if hasattr(response_obj, 'is_error') and response_obj.is_error:
                     error_str = response_obj.content
+
+                    # Check for thinking signature error (corrupted session history)
+                    if "thinking.signature" in error_str or "Invalid signature in thinking block" in error_str:
+                        logger.warning("Session has corrupted thinking blocks. Starting fresh session...")
+                        # Clear the stored session ID so we don't try to resume again
+                        if user_id:
+                            db_manager.set_user_session(user_id, None)
+                        if request.context:
+                            request.context.user_data['claude_session_id'] = None
+                        # Retry without session
+                        response_obj = await claude_executor.execute_command(
+                            prompt=request.prompt,
+                            working_directory=claude_executor.config.approved_directory,
+                            session_id=None,
+                            continue_session=False,
+                            stream_callback=stream_callback,
+                            model_override=model_override
+                        )
+                        if hasattr(response_obj, 'is_error') and response_obj.is_error:
+                            raise RuntimeError(f"Claude CLI error: {response_obj.content}")
+
                     # Check if this is the JPEG/PNG mismatch error
-                    if "image/jpeg" in error_str and "does not match" in error_str:
+                    elif "image/jpeg" in error_str and "does not match" in error_str:
                         logger.warning(f"Claude CLI image format mismatch (likely PNG labeled as JPEG). Retrying with new session...")
                         # Retry without session to avoid the problematic history
                         response_obj = await claude_executor.execute_command(
@@ -407,8 +428,29 @@ async def claude_worker(shutdown_event=None):
 
             except Exception as e:
                 error_str = str(e)
+
+                # Check for thinking signature error (corrupted session history)
+                if "thinking.signature" in error_str or "Invalid signature in thinking block" in error_str:
+                    logger.warning("Session has corrupted thinking blocks. Starting fresh session...")
+                    # Clear the stored session ID so we don't try to resume again
+                    if user_id:
+                        db_manager.set_user_session(user_id, None)
+                    if request.context:
+                        request.context.user_data['claude_session_id'] = None
+                    # Retry without session
+                    response_obj = await claude_executor.execute_command(
+                        prompt=request.prompt,
+                        working_directory=claude_executor.config.approved_directory,
+                        session_id=None,
+                        continue_session=False,
+                        stream_callback=stream_callback,
+                        model_override=model_override
+                    )
+                    if hasattr(response_obj, 'is_error') and response_obj.is_error:
+                        raise RuntimeError(f"Claude CLI error after retry: {response_obj.content}")
+
                 # Check if this is the JPEG/PNG mismatch error from exception
-                if "image/jpeg" in error_str and "does not match" in error_str:
+                elif "image/jpeg" in error_str and "does not match" in error_str:
                     logger.warning(f"Claude CLI image format mismatch (likely PNG labeled as JPEG). Retrying with new session...")
                     # Retry without session to avoid the problematic history
                     response_obj = await claude_executor.execute_command(

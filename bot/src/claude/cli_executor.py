@@ -188,6 +188,10 @@ class ClaudeProcessManager:
         time_str = current_time.strftime('%B %d, %Y %I:%M %p %Z')
         cmd.extend(["--append-system-prompt", f"The local time for leaf is {time_str}"])
 
+        # Disable thinking if configured
+        if hasattr(self.config, 'claude_thinking_enabled') and not self.config.claude_thinking_enabled:
+            cmd.extend(["--settings", '{"alwaysThinkingEnabled": false}'])
+
         logger.debug(f"Built command: {' '.join(cmd)}")
         return cmd
 
